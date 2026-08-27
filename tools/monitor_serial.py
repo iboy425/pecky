@@ -40,7 +40,7 @@ def choose_port(requested: str | None) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", help="例如 COM7；省略时自动选择")
-    parser.add_argument("--baud", type=int, default=115200)
+    parser.add_argument("--baud", type=int, default=460800)
     parser.add_argument("--seconds", type=float, default=15.0)
     args = parser.parse_args()
 

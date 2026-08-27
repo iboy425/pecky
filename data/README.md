@@ -10,6 +10,8 @@
 python tools/capture_motion.py --port COM7 --label chin_tuck --seconds 15 --subject S01
 ```
 
+压力+IMU 固件默认使用 `460800` 波特率以保证扩展数据仍能达到 100 Hz；若回刷旧版仅 IMU 固件，请额外指定 `--baud 115200`。
+
 如需指定输出目录：
 
 ```powershell

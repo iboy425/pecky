@@ -29,7 +29,7 @@ except ImportError:  # pragma: no cover - 仅在用户环境缺少依赖时触�
     raise SystemExit(2)
 
 
-BAUDRATE = 115200
+DEFAULT_BAUDRATE = 460800
 DEFAULT_OUTPUT = Path(__file__).resolve().parent.parent / "data" / "raw"
 
 LEGACY_DEVICE_FIELDS = (
@@ -92,6 +92,12 @@ def parse_args() -> argparse.Namespace:
         description="只读采集 ESP32/MPU6050 动作数据并写入 CSV。"
     )
     parser.add_argument("--port", default="COM7", help="串口名称（默认：COM7）")
+    parser.add_argument(
+        "--baud",
+        type=int,
+        default=DEFAULT_BAUDRATE,
+        help=f"串口波特率（默认：{DEFAULT_BAUDRATE}）",
+    )
     parser.add_argument("--label", required=True, type=non_empty, help="动作标签")
     parser.add_argument(
         "--seconds",
@@ -187,11 +193,11 @@ def looks_like_port_busy(exc: BaseException) -> bool:
     return any(marker in message for marker in busy_markers)
 
 
-def open_read_only_serial(port: str) -> serial.Serial:
+def open_read_only_serial(port: str, baudrate: int = DEFAULT_BAUDRATE) -> serial.Serial:
     """打开只读串口；在 open 前保持 DTR/RTS 为低，避免主动复位板卡。"""
     connection = serial.Serial()
     connection.port = port
-    connection.baudrate = BAUDRATE
+    connection.baudrate = baudrate
     connection.bytesize = serial.EIGHTBITS
     connection.parity = serial.PARITY_NONE
     connection.stopbits = serial.STOPBITS_ONE
@@ -261,7 +267,7 @@ def collect(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        connection = open_read_only_serial(args.port)
+        connection = open_read_only_serial(args.port, args.baud)
     except (serial.SerialException, OSError) as exc:
         if looks_like_port_busy(exc):
             print(
@@ -290,7 +296,7 @@ def collect(args: argparse.Namespace) -> int:
     deadline = started + args.seconds
 
     print(
-        f"开始采集：端口={args.port}，标签={args.label}，"
+        f"开始采集：端口={args.port}，波特率={args.baud}，标签={args.label}，"
         f"受试者={args.subject}，时长={args.seconds:g}s"
     )
     print("提示：按 Ctrl+C 可提前结束，已采集数据仍会保存。")
@@ -330,7 +336,7 @@ def collect(args: argparse.Namespace) -> int:
                         "subject": args.subject,
                         "label": args.label,
                         "port": args.port,
-                        "baudrate": BAUDRATE,
+                        "baudrate": args.baud,
                         **parsed,
                     }
                     writer.writerow(row)

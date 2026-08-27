@@ -7,7 +7,7 @@ constexpr uint8_t kMpuAddress = 0x68;
 constexpr int kSdaPin = 8;
 constexpr int kSclPin = 9;
 constexpr int kPressurePin = 4;
-constexpr uint32_t kSerialBaud = 115200;
+constexpr uint32_t kSerialBaud = 460800;
 constexpr uint32_t kSamplePeriodUs = 10000;  // 100 Hz
 
 constexpr uint8_t kRegSampleRateDivider = 0x19;
@@ -29,6 +29,7 @@ float pressureOnDelta = 80.0f;
 uint32_t nextSampleUs = 0;
 uint32_t sampleSequence = 0;
 bool sensorReady = false;
+bool attitudeInitialized = false;
 uint8_t sensorWhoAmI = 0;
 
 int16_t makeInt16(uint8_t highByte, uint8_t lowByte) {
@@ -252,10 +253,16 @@ void loop() {
   const float accelerometerRoll = atan2f(ay, az) * 180.0f / PI;
   constexpr float kDtSeconds = kSamplePeriodUs / 1000000.0f;
   constexpr float kGyroWeight = 0.98f;
-  pitchDeg = kGyroWeight * (pitchDeg + gy * kDtSeconds) +
-             (1.0f - kGyroWeight) * accelerometerPitch;
-  rollDeg = kGyroWeight * (rollDeg + gx * kDtSeconds) +
-            (1.0f - kGyroWeight) * accelerometerRoll;
+  if (!attitudeInitialized) {
+    pitchDeg = accelerometerPitch;
+    rollDeg = accelerometerRoll;
+    attitudeInitialized = true;
+  } else {
+    pitchDeg = kGyroWeight * (pitchDeg + gy * kDtSeconds) +
+               (1.0f - kGyroWeight) * accelerometerPitch;
+    rollDeg = kGyroWeight * (rollDeg + gx * kDtSeconds) +
+              (1.0f - kGyroWeight) * accelerometerRoll;
+  }
 
   Serial.printf(
       "DATA,%lu,%lu,%.5f,%.5f,%.5f,%.4f,%.4f,%.4f,%.2f,%.3f,%.3f,%.5f,%u,%.1f,%.1f,%.1f,%s\n",
