@@ -1,0 +1,26 @@
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Locally captured motion data and trained artifacts
+data/**/*.csv
+data/**/*.parquet
+models/
+*.joblib
+
+# Local Arduino build output
+build/
+*.bin
+*.elf
+*.map
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Official source materials are kept locally; the GitHub repository tracks code.
+/硬件资料/
