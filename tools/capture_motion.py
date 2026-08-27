@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """从 ESP32 动作识别固件只读采集 MPU6050 数据并保存为 CSV。
 
-固件输出协议（共 12 个逗号分隔字段）：
-DATA,t_ms,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps,temp_c,pitch_deg,roll_deg,acc_mag_g
+当前固件输出协议（共 18 个逗号分隔字段）：
+DATA,seq,t_ms,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps,temp_c,pitch_deg,roll_deg,acc_mag_g,pressure_raw,pressure_filtered,pressure_baseline,pressure_delta,pressure_state
 
 本工具只读取串口：不会向开发板发送命令，也不会主动复位硬件。
 """
@@ -32,7 +32,7 @@ except ImportError:  # pragma: no cover - 仅在用户环境缺少依赖时触�
 BAUDRATE = 115200
 DEFAULT_OUTPUT = Path(__file__).resolve().parent.parent / "data" / "raw"
 
-DEVICE_FIELDS = (
+LEGACY_DEVICE_FIELDS = (
     "device_t_ms",
     "ax_g",
     "ay_g",
@@ -44,6 +44,16 @@ DEVICE_FIELDS = (
     "pitch_deg",
     "roll_deg",
     "acc_mag_g",
+)
+
+DEVICE_FIELDS = (
+    "seq",
+    *LEGACY_DEVICE_FIELDS,
+    "pressure_raw",
+    "pressure_filtered",
+    "pressure_baseline",
+    "pressure_delta",
+    "pressure_state",
 )
 
 CSV_FIELDS = (
@@ -122,27 +132,46 @@ def make_output_path(output_dir: Path, subject: str, label: str) -> tuple[Path, 
     return output_dir / f"motion_{session_id}.csv", session_id
 
 
-def parse_data_line(line: str) -> dict[str, int | float] | None:
+def parse_data_line(line: str) -> dict[str, int | float | str | None] | None:
     """解析一行 DATA；非 DATA、字段错误或非有限数值均返回 None。"""
     if not line.startswith("DATA,"):
         # INFO、HEADER、ESP-ROM 启动日志和空行都在这里被安全忽略。
         return None
 
     parts = [part.strip() for part in line.split(",")]
-    if len(parts) != 12:
-        return None
-
     try:
-        device_t_ms = int(parts[1], 10)
-        floats = [float(value) for value in parts[2:]]
+        if len(parts) == 18:
+            seq = int(parts[1], 10)
+            device_t_ms = int(parts[2], 10)
+            floats = [float(value) for value in parts[3:17]]
+            pressure_state = parts[17]
+            if pressure_state not in {"PRESSED", "RELEASED"}:
+                return None
+            if seq < 0 or device_t_ms < 0 or not all(
+                math.isfinite(value) for value in floats
+            ):
+                return None
+            return dict(zip(DEVICE_FIELDS, [seq, device_t_ms, *floats, pressure_state]))
+
+        if len(parts) == 12:
+            device_t_ms = int(parts[1], 10)
+            floats = [float(value) for value in parts[2:]]
+            if device_t_ms < 0 or not all(math.isfinite(value) for value in floats):
+                return None
+            legacy = dict(zip(LEGACY_DEVICE_FIELDS, [device_t_ms, *floats]))
+            return {
+                "seq": None,
+                **legacy,
+                "pressure_raw": None,
+                "pressure_filtered": None,
+                "pressure_baseline": None,
+                "pressure_delta": None,
+                "pressure_state": None,
+            }
     except ValueError:
         return None
 
-    if device_t_ms < 0 or not all(math.isfinite(value) for value in floats):
-        return None
-
-    values: list[int | float] = [device_t_ms, *floats]
-    return dict(zip(DEVICE_FIELDS, values))
+    return None
 
 
 def looks_like_port_busy(exc: BaseException) -> bool:

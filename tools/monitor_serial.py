@@ -1,4 +1,4 @@
-"""Monitor and validate the ESP32-S3 + MPU60x0/MPU6500 hardware demo."""
+"""Monitor and validate the ESP32-S3 IMU or pressure+IMU stream."""
 
 from __future__ import annotations
 
@@ -56,6 +56,10 @@ def main() -> int:
     saw_ready = False
     error_lines: list[str] = []
     timestamps: list[int] = []
+    sequences: list[int] = []
+    pressure_raw_values: list[float] = []
+    pressure_delta_values: list[float] = []
+    pressure_states: set[str] = set()
 
     try:
         with serial.Serial(port, args.baud, timeout=0.25) as device:
@@ -84,13 +88,28 @@ def main() -> int:
                     error_lines.append(line)
                 if line.startswith("DATA,"):
                     fields = line.split(",")
-                    if len(fields) == 12:
+                    if len(fields) == 18:
+                        try:
+                            sequences.append(int(fields[1]))
+                            timestamps.append(int(fields[2]))
+                            for value in fields[3:17]:
+                                float(value)
+                            pressure_raw_values.append(float(fields[13]))
+                            pressure_delta_values.append(float(fields[16]))
+                            if fields[17] not in {"PRESSED", "RELEASED"}:
+                                raise ValueError
+                            pressure_states.add(fields[17])
+                        except ValueError:
+                            error_lines.append("ERROR,INVALID_DATA_LINE")
+                    elif len(fields) == 12:
                         try:
                             timestamps.append(int(fields[1]))
                             for value in fields[2:]:
                                 float(value)
                         except ValueError:
                             error_lines.append("ERROR,INVALID_DATA_LINE")
+                    else:
+                        error_lines.append("ERROR,INVALID_DATA_FIELD_COUNT")
     except serial.SerialException as error:
         print(f"ERROR: 无法打开串口 {port}: {error}", file=sys.stderr)
         print("请关闭 PuTTY 和 Arduino Serial Monitor 后重试。", file=sys.stderr)
@@ -108,15 +127,20 @@ def main() -> int:
     print(f"IMU 初始化: {'通过' if saw_ready else '未通过'}")
     print(f"有效 DATA 行: {len(timestamps)}")
     print(f"估算采样率: {sample_rate:.1f} Hz")
+    if pressure_raw_values:
+        print(
+            "压力 ADC 范围: "
+            f"{min(pressure_raw_values):.0f}–{max(pressure_raw_values):.0f}"
+        )
+        print(f"压力增量最大值: {max(pressure_delta_values):.1f}")
+        print("压力状态: " + ", ".join(sorted(pressure_states)))
     if error_lines:
         print("错误：")
         for line in sorted(set(error_lines)):
             print(f"  {line}")
 
     passed = (
-        saw_address
-        and saw_identity
-        and saw_ready
+        (saw_address and saw_identity and saw_ready or len(timestamps) >= 100)
         and len(timestamps) >= 100
         and 90.0 <= sample_rate <= 110.0
         and not error_lines

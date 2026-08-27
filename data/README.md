@@ -16,7 +16,7 @@ python tools/capture_motion.py --port COM7 --label chin_tuck --seconds 15 --subj
 python tools/capture_motion.py --port COM7 --label still --seconds 20 --subject S01 --output data/raw
 ```
 
-每个 CSV 都包含 `subject`、`label`、采集时间、串口、设备时间戳和全部传感器字段。按 `Ctrl+C` 提前结束也会保存已经收到的数据。
+每个 CSV 都包含 `subject`、`label`、采集时间、串口、设备时间戳、六轴 IMU、姿态以及压力原值、滤波值、基线、增量和状态。脚本也兼容旧版仅 IMU 的 12 列固件。按 `Ctrl+C` 提前结束也会保存已经收到的数据。
 
 ## 通用采集要求
 
