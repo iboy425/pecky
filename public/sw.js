@@ -1,9 +1,12 @@
-const CACHE_NAME = "pecky-shell-2026-08-28-v1";
+const CACHE_NAME = "pecky-shell-2026-08-28-v2";
 const CORE_ASSETS = [
   "/",
   "/manifest.webmanifest",
   "/assets/jar-scene.webp",
+  "/assets/jar-still.webp",
   "/assets/pecky-avatar.webp",
+  "/assets/media/pecky-opening.mp4",
+  "/assets/media/pecky-orbit.mp4",
   "/assets/icons/pecky-192.png",
   "/assets/icons/pecky-512.png"
 ];

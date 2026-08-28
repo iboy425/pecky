@@ -112,6 +112,7 @@ export function PeckyApp() {
   const [tab, setTab] = useState<TabId>("jar");
   const [openingPhase, setOpeningPhase] = useState<OpeningPhase>("booting");
   const [openingBatch, setOpeningBatch] = useState<OpeningBatch | null>(null);
+  const [jarArrivalKey, setJarArrivalKey] = useState(0);
   const [modal, setModal] = useState<ModalState>(null);
   const [confirmation, setConfirmation] = useState<ConfirmationState>(null);
   const [toast, setToast] = useState<{ message: string; tone: "info" | "success" | "error" } | null>(null);
@@ -221,6 +222,7 @@ export function PeckyApp() {
     if (!openingBatch || finishingOpening.current) return;
     finishingOpening.current = true;
     setOpeningPhase("collapsing");
+    setJarArrivalKey((current) => current + 1);
 
     try {
       const next = await updatePeckyState(
@@ -297,24 +299,27 @@ export function PeckyApp() {
   );
 
   const ingestFromSource = useCallback(
-    async (source: PeckyDataSource) => {
+    async (source: PeckyDataSource): Promise<boolean> => {
       let unsubscribe: () => void = () => undefined;
       let connected = false;
       let primaryFailure = false;
       let subscriptionQueue = Promise.resolve();
+      let addedAnyEvents = false;
 
       const reportResult = (finalResult: ReturnType<typeof ingestExternalEvents>) => {
         if (finalResult.added > 0) {
           const ignored = finalResult.invalid.length + finalResult.duplicates;
           showToast(
-            `已入账 ${formatMoney(finalResult.addedAmountMinor)}（${finalResult.addedPecks} 次啄米）${ignored ? `，忽略 ${ignored} 条` : ""}。下次打开会播放开屏。`,
+            `已入账 ${formatMoney(finalResult.addedAmountMinor)}（${finalResult.addedPecks} 次啄米）${ignored ? `，忽略 ${ignored} 条` : ""}。刷新页面或彻底关闭后重开，会播放一次开屏。`,
             "success",
           );
+          return true;
         } else if (finalResult.duplicates > 0 && finalResult.invalid.length === 0) {
           showToast("没有新数据：这些记录已经入账", "info");
         } else {
           showToast(finalResult.invalid[0] ?? "数据包中没有可入账记录", "error");
         }
+        return false;
       };
 
       const applyBatch = async (batch: PeckyEventBatch) => {
@@ -343,12 +348,12 @@ export function PeckyApp() {
         unsubscribe = source.subscribe((batch) => {
           subscriptionQueue = subscriptionQueue.then(async () => {
             const result = await applyBatch(batch);
-            if (result) reportResult(result);
+            if (result) addedAnyEvents = reportResult(result) || addedAnyEvents;
           });
         });
         const batch = await source.pull(latest.sourceCursors[source.id]);
         const result = await applyBatch(batch);
-        if (result) reportResult(result);
+        if (result) addedAnyEvents = reportResult(result) || addedAnyEvents;
         await subscriptionQueue;
       } catch (error) {
         primaryFailure = true;
@@ -363,6 +368,8 @@ export function PeckyApp() {
           }
         }
       }
+
+      return addedAnyEvents;
     },
     [commit, seedDemo, showToast],
   );
@@ -431,7 +438,7 @@ export function PeckyApp() {
         const demo = await replaceWithDemoState();
         setState(demo);
         setModal(null);
-        showToast("演示数据已载入；下次打开会播放 10 次啄米", "success");
+        showToast("演示数据已载入；刷新页面或彻底关闭后重开，会播放 10 次啄米", "success");
       } catch (error) {
         showToast(error instanceof Error ? error.message : "载入失败", "error");
       }
@@ -455,6 +462,7 @@ export function PeckyApp() {
         {tab === "jar" ? (
           <JarPage
             state={state}
+            arrivalKey={jarArrivalKey}
             onAdd={() => setModal({ kind: "goal" })}
             onEdit={(goal) => setModal({ kind: "goal", goal })}
             onPurchase={(goal) => setConfirmation({ kind: "purchase", goal })}
@@ -643,12 +651,14 @@ function OpeningExperience({
 
 function JarPage({
   state,
+  arrivalKey,
   onAdd,
   onEdit,
   onPurchase,
   onShowAll,
 }: {
   state: PeckyState;
+  arrivalKey: number;
   onAdd: () => void;
   onEdit: (goal: WishGoal) => void;
   onPurchase: (goal: WishGoal) => void;
@@ -671,7 +681,7 @@ function JarPage({
           <strong>{formatMoney(state.currentBalanceMinor)}</strong>
           <p>每一粒，都算数</p>
         </div>
-        <img src="/assets/jar-scene.webp" alt="小鸡陪在装着米的米罐旁" />
+        <JarBalanceArt arrivalKey={arrivalKey} />
       </section>
 
       <div className="section-heading">
@@ -735,6 +745,73 @@ function JarPage({
         </div>
       )}
     </section>
+  );
+}
+
+function JarBalanceArt({ arrivalKey }: { arrivalKey: number }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [videoFailed, setVideoFailed] = useState(false);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const playIfAllowed = () => {
+      if (reducedMotion.matches) {
+        video.pause();
+        return;
+      }
+      video.muted = true;
+      video.play().catch(() => undefined);
+    };
+
+    const onMotionChange = () => playIfAllowed();
+    video.addEventListener("canplay", playIfAllowed);
+    reducedMotion.addEventListener("change", onMotionChange);
+    playIfAllowed();
+
+    return () => {
+      video.removeEventListener("canplay", playIfAllowed);
+      reducedMotion.removeEventListener("change", onMotionChange);
+    };
+  }, [videoFailed]);
+
+  useEffect(() => {
+    if (arrivalKey === 0 || videoFailed) return;
+    const video = videoRef.current;
+    if (!video || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+    const restart = () => {
+      video.currentTime = 0;
+      video.muted = true;
+      video.play().catch(() => undefined);
+    };
+
+    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      restart();
+      return;
+    }
+    video.addEventListener("canplay", restart, { once: true });
+    return () => video.removeEventListener("canplay", restart);
+  }, [arrivalKey, videoFailed]);
+
+  return (
+    <div className="balance-art" aria-hidden="true">
+      <img src="/assets/jar-still.webp" alt="" />
+      {!videoFailed && (
+        <video
+          ref={videoRef}
+          src="/assets/media/pecky-orbit.mp4"
+          autoPlay
+          loop
+          muted
+          playsInline
+          preload="metadata"
+          onError={() => setVideoFailed(true)}
+        />
+      )}
+    </div>
   );
 }
 
@@ -1043,7 +1120,7 @@ function SettingsSheet({
   state: PeckyState;
   onClose: () => void;
   onSoundChange: (enabled: boolean) => Promise<void>;
-  onSimulate: (pecks: number, amount: number) => Promise<void>;
+  onSimulate: (pecks: number, amount: number) => Promise<boolean>;
   onJsonFile: (file: File) => Promise<void>;
   onInstall: () => Promise<void>;
   installAvailable: boolean;
@@ -1060,6 +1137,16 @@ function SettingsSheet({
     setBusy(true);
     await onSimulate(Number(pecks), Number(amount));
     setBusy(false);
+  };
+
+  const simulateAndPreviewOpening = async () => {
+    setBusy(true);
+    const received = await onSimulate(Number(pecks), Number(amount));
+    if (!received) {
+      setBusy(false);
+      return;
+    }
+    window.setTimeout(() => window.location.reload(), 260);
   };
 
   const chooseFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1099,12 +1186,15 @@ function SettingsSheet({
 
         <section className="settings-group">
           <h3>硬件数据模拟器</h3>
-          <p className="settings-note">第一版用模拟器和 JSON 走同一条入账接口；收到的数据会在下次打开时播放一次开屏。</p>
+          <p className="settings-note">第一版用模拟器和 JSON 走同一条入账接口。想直接检查开屏，可模拟入账后自动刷新；这次数据只会播放一次。</p>
           <form className="simulator-form" onSubmit={simulate}>
             <label><span>啄米次数</span><input type="number" inputMode="numeric" min="1" step="1" value={pecks} onChange={(event) => setPecks(event.target.value)} /></label>
             <label><span>入账金额（元）</span><input type="number" inputMode="decimal" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} /></label>
             <button className="primary-button full-button" type="submit" disabled={busy}>{busy ? "接收中…" : "模拟接收数据"}</button>
           </form>
+          <button className="secondary-button full-button opening-preview-button" type="button" disabled={busy} onClick={simulateAndPreviewOpening}>
+            {busy ? "准备开屏…" : "模拟并播放开屏"}
+          </button>
           <input ref={fileInput} className="visually-hidden" type="file" accept="application/json,.json" onChange={chooseFile} />
           <div className="settings-button-grid">
             <button className="secondary-button" type="button" onClick={() => fileInput.current?.click()} disabled={busy}><PeckyIcon name="upload" /> 导入 JSON</button>

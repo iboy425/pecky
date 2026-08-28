@@ -158,6 +158,7 @@ svg {
 
 .balance-card {
   position: relative;
+  isolation: isolate;
   min-height: 278px;
   margin-top: 22px;
   overflow: hidden;
@@ -166,20 +167,45 @@ svg {
   background: var(--hero);
 }
 
-.balance-card > img {
+.balance-art {
   position: absolute;
-  right: -28%;
-  bottom: -2%;
-  width: 111%;
-  max-width: none;
+  z-index: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 57%;
+  overflow: hidden;
   pointer-events: none;
+}
+
+.balance-art img,
+.balance-art video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 52%;
+}
+
+.balance-art img {
+  object-fit: contain;
+  object-position: 50% 58%;
+  background: var(--hero);
+}
+
+.balance-art video {
+  z-index: 1;
 }
 
 .balance-copy {
   position: relative;
-  z-index: 1;
-  width: 59%;
+  z-index: 2;
+  width: 46%;
+  min-height: 100%;
   padding: 32px 0 0 24px;
+  border-radius: 27px 0 0 27px;
+  background: rgba(255, 249, 231, 0.88);
 }
 
 .balance-copy > span,
@@ -1138,6 +1164,10 @@ svg {
   grid-column: 1 / -1;
 }
 
+.opening-preview-button {
+  margin-top: 10px;
+}
+
 .settings-button-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1346,15 +1376,10 @@ body {
   border-radius: 22px;
 }
 
-.balance-card > img {
-  right: -22%;
-  bottom: -8%;
-  width: 101%;
-}
-
 .balance-copy {
-  width: 57%;
+  width: 46%;
   padding: 20px 0 0 18px;
+  border-radius: 21px 0 0 21px;
 }
 
 .balance-copy > span,
@@ -1908,6 +1933,10 @@ body {
   }
 
   .opening-media video {
+    display: none;
+  }
+
+  .balance-art video {
     display: none;
   }
 

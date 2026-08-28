@@ -12,7 +12,13 @@ const sources = {
     "animation 新素材",
     "小鸡啄米-啄米+叫声音轨版开屏peck页面.mp4",
   ),
+  orbitVideo: path.join(
+    sourceRoot,
+    "animation 新素材",
+    "yes-小鸡绕罐镜头_v2_1080p_去水印.mp4",
+  ),
   jar: path.join(sourceRoot, "pecky-design-system-v01", "assets", "jar-original.png"),
+  jarStill: path.join(sourceRoot, "animation 新素材", "米缸.PNG"),
   identity: path.join(
     sourceRoot,
     "pecky-design-system-v01",
@@ -65,6 +71,11 @@ async function prepareJarArt() {
     .resize({ width: 820, withoutEnlargement: true })
     .webp({ quality: 88, effort: 5 })
     .toFile(path.join(outputRoot, "jar-scene.webp"));
+
+  await sharp(sources.jarStill)
+    .resize(560, 560, { fit: "contain" })
+    .webp({ quality: 90, effort: 5 })
+    .toFile(path.join(outputRoot, "jar-still.webp"));
 
   const avatarBuffer = await sharp(sources.jar)
     .extract({ left: 1060, top: 500, width: 585, height: 585 })
@@ -236,10 +247,16 @@ async function prepareAchievementIcons() {
 }
 
 async function prepareVideo() {
-  await copyFile(
-    sources.openingVideo,
-    path.join(outputRoot, "media", "pecky-opening.mp4"),
-  );
+  await Promise.all([
+    copyFile(
+      sources.openingVideo,
+      path.join(outputRoot, "media", "pecky-opening.mp4"),
+    ),
+    copyFile(
+      sources.orbitVideo,
+      path.join(outputRoot, "media", "pecky-orbit.mp4"),
+    ),
+  ]);
 }
 
 async function main() {

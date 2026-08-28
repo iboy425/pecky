@@ -44,7 +44,7 @@ test("ships the one-way opening flow, local persistence, adapters, and PWA files
 
   assert.match(app, /OpeningExperience/);
   assert.match(app, /openingPhase/);
-  assert.match(app, /下次打开会播放开屏/);
+  assert.match(app, /模拟并播放开屏/);
   assert.match(model, /presentationStartedAt/);
   assert.match(model, /purchaseGoal/);
   assert.match(storage, /indexedDB\.open/);
@@ -57,6 +57,8 @@ test("ships the one-way opening flow, local persistence, adapters, and PWA files
 
   await Promise.all([
     access(new URL("../public/assets/media/pecky-opening.mp4", import.meta.url)),
+    access(new URL("../public/assets/media/pecky-orbit.mp4", import.meta.url)),
+    access(new URL("../public/assets/jar-still.webp", import.meta.url)),
     access(new URL("../public/assets/icons/pecky-512.png", import.meta.url)),
     access(new URL("../public/assets/rewards/stocks.webp", import.meta.url)),
     access(new URL("../public/assets/rewards/jewelry.webp", import.meta.url)),
