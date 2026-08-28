@@ -6,11 +6,10 @@
  *   MPU6500/MPU6050-compatible IMU at I2C address 0x68
  *   optional existing RFP602 pressure divider at GPIO4
  *
- * Behaviour (V2 — RST toggle collection):
- *   - normal power-on / USB connection stays idle and never creates a session;
- *   - press RST once while idle -> keep still for 3 seconds -> start a new CSV;
- *   - press RST again while recording -> stop that session. The next RST starts
- *     the next participant's file;
+ * Behaviour (V3 — power-session collection):
+ *   - power on or reset -> keep still for 3 seconds -> start a new CSV;
+ *   - remove external power -> stop that session;
+ *   - do not press RST to split participants: it begins a fresh session;
  *   - samples are flushed every 250 ms, so an abrupt reset may lose at most the
  *     final quarter-second rather than mixing walking / setup data into a file;
  *   - connect USB later and use LIST / DUMP /hat_XXXX.csv over Serial to read
@@ -22,7 +21,6 @@
 #include <LittleFS.h>
 #include <Preferences.h>
 #include <Wire.h>
-#include <esp_system.h>
 #include <math.h>
 
 namespace {
@@ -76,37 +74,6 @@ float pressureBaseline = 0.0f;
 
 char commandBuffer[96] = {};
 size_t commandLength = 0;
-
-// The RST button resets the CPU before firmware can run. Persisting this bit
-// lets the *next boot* interpret an external reset as the opposite collection
-// state: idle -> start, active -> stop. Power-on / USB boots deliberately
-// clear an unfinished active bit and stay idle, so simply plugging in USB never
-// creates a spurious session.
-bool readCaptureState(bool& configured, bool& active) {
-  configured = false;
-  active = false;
-  if (!preferences.begin("peckylog", false)) {
-    Serial.println("ERROR,PREFERENCES_OPEN_FAILED");
-    return false;
-  }
-  // ESP32 NVS keys are limited to 15 characters.
-  configured = preferences.isKey("cap_cfg");
-  active = configured && preferences.getBool("cap_active", false);
-  preferences.end();
-  return true;
-}
-
-bool persistCaptureState(bool active) {
-  if (!preferences.begin("peckylog", false)) {
-    Serial.println("ERROR,PREFERENCES_OPEN_FAILED");
-    return false;
-  }
-  const bool ok = preferences.putBool("cap_cfg", true) > 0 &&
-                  preferences.putBool("cap_active", active) > 0;
-  preferences.end();
-  if (!ok) Serial.println("ERROR,CAPTURE_STATE_SAVE_FAILED");
-  return ok;
-}
 
 int16_t makeInt16(uint8_t highByte, uint8_t lowByte) {
   return static_cast<int16_t>((static_cast<uint16_t>(highByte) << 8) | lowByte);
@@ -270,10 +237,13 @@ void closeLogFile() {
 }
 
 void stopCapture(const char* reason) {
+  char finishedFilename[sizeof(activeFilename)] = {};
+  strncpy(finishedFilename, activeFilename, sizeof(finishedFilename) - 1);
   closeLogFile();
   captureRequested = false;
-  persistCaptureState(false);
-  Serial.printf("INFO,CAPTURE_STOPPED,%s\n", reason);
+  activeFilename[0] = '\0';
+  Serial.printf("INFO,CAPTURE_STOPPED,%s,%s\n", reason,
+                finishedFilename[0] ? finishedFilename : "NONE");
 }
 
 bool openNewLogFile() {
@@ -303,12 +273,9 @@ bool openNewLogFile() {
   lastStatusMs = sessionStartMs;
   sampleSequence = 0;
   logging = true;
-  if (!persistCaptureState(true)) {
-    closeLogFile();
-    return false;
-  }
+  captureRequested = true;
   Serial.printf("INFO,LOGGING_STARTED,%s\n", activeFilename);
-  Serial.println("INFO,RST_TOGGLE,RECORDING_PRESS_RST_AGAIN_TO_STOP");
+  Serial.println("INFO,POWER_SESSION,REMOVE_POWER_TO_STOP");
   Serial.println("INFO,SERIAL_COMMANDS,LIST | DUMP /hat_XXXX.csv | STATUS | ERASE_ALL");
   return true;
 }
@@ -407,9 +374,8 @@ void eraseAllLogs() {
   }
   activeFilename[0] = '\0';
   captureRequested = false;
-  persistCaptureState(false);
   Serial.println("INFO,ERASE_ALL_COMPLETE");
-  Serial.println("INFO,CAPTURE_IDLE,PRESS_RST_ONCE_TO_START");
+  Serial.println("INFO,CAPTURE_IDLE,POWER_CYCLE_TO_START");
 }
 
 void executeCommand(char* rawCommand) {
@@ -532,7 +498,7 @@ void setup() {
   Serial.begin(kSerialBaud);
   delay(700);
   Serial.println();
-  Serial.println("INFO,PECKY_HAT_FLASH_LOGGER_V2_RST_TOGGLE");
+  Serial.println("INFO,PECKY_HAT_FLASH_LOGGER_V3_POWER_SESSION");
   Serial.printf("INFO,PINS,SDA=%d,SCL=%d,PRESSURE_ADC=%d\n", kSdaPin, kSclPin,
                 kPressurePin);
 
@@ -548,34 +514,8 @@ void setup() {
   Serial.printf("INFO,LITTLEFS_READY,TOTAL=%u,USED=%u\n",
                 static_cast<unsigned>(LittleFS.totalBytes()),
                 static_cast<unsigned>(LittleFS.usedBytes()));
-
-  bool captureConfigured = false;
-  bool captureWasActive = false;
-  if (!readCaptureState(captureConfigured, captureWasActive)) return;
-
-  const esp_reset_reason_t resetReason = esp_reset_reason();
-  Serial.printf("INFO,RESET_REASON,%d\n", static_cast<int>(resetReason));
-
-  // USB insertion, battery power-on, upload and brownout resets never start a
-  // session. If power was removed while recording, that old file is already
-  // complete enough to download (we flush every 250 ms), so mark it closed.
-  if (resetReason != ESP_RST_EXT) {
-    if (!captureConfigured || captureWasActive) persistCaptureState(false);
-    Serial.println("INFO,CAPTURE_IDLE,PRESS_RST_ONCE_TO_START");
-    return;
-  }
-
-  // An external RST is the intended one-button toggle. Its prior state decides
-  // whether this boot starts the next participant or closes the previous one.
-  if (captureWasActive) {
-    persistCaptureState(false);
-    Serial.println("INFO,RST_TOGGLE,STOPPED");
-    Serial.println("INFO,CAPTURE_IDLE,PRESS_RST_ONCE_TO_START");
-    return;
-  }
-
   captureRequested = true;
-  Serial.println("INFO,RST_TOGGLE,STARTING_KEEP_STILL_FOR_CALIBRATION");
+  Serial.println("INFO,POWER_ON,KEEP_STILL_FOR_CALIBRATION");
   if (!initializeRun()) {
     Serial.println("ERROR,STARTUP_FAILED,RETRYING_EVERY_2_SECONDS");
   }
