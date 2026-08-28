@@ -6,11 +6,13 @@
  *   MPU6500/MPU6050-compatible IMU at I2C address 0x68
  *   optional existing RFP602 pressure divider at GPIO4
  *
- * Behaviour:
- *   - power on or RST -> keep still for 3 seconds -> automatically start a new CSV
- *     session in the ESP32's LittleFS flash storage;
- *   - power off -> logging stops. Each line is flushed once per second, so a
- *     sudden power loss may lose only the final second of samples;
+ * Behaviour (V2 — RST toggle collection):
+ *   - normal power-on / USB connection stays idle and never creates a session;
+ *   - press RST once while idle -> keep still for 3 seconds -> start a new CSV;
+ *   - press RST again while recording -> stop that session. The next RST starts
+ *     the next participant's file;
+ *   - samples are flushed every 250 ms, so an abrupt reset may lose at most the
+ *     final quarter-second rather than mixing walking / setup data into a file;
  *   - connect USB later and use LIST / DUMP /hat_XXXX.csv over Serial to read
  *     saved sessions without adding an SD card.
  */
@@ -20,6 +22,7 @@
 #include <LittleFS.h>
 #include <Preferences.h>
 #include <Wire.h>
+#include <esp_system.h>
 #include <math.h>
 
 namespace {
@@ -34,7 +37,7 @@ constexpr uint32_t kSerialBaud = 115200;
 // 25 Hz comfortably captures slow neck exercises and lets ten one-minute
 // participants fit in the 3 MB local filesystem as raw CSV.
 constexpr uint32_t kSamplePeriodUs = 40000;
-constexpr uint32_t kFlushPeriodMs = 1000;
+constexpr uint32_t kFlushPeriodMs = 250;
 constexpr uint32_t kStatusPeriodMs = 1000;
 constexpr size_t kMaxLogBytes = 2800000;  // Safety limit inside the 3 MB LittleFS layout.
 
@@ -51,6 +54,7 @@ Preferences preferences;
 
 bool imuReady = false;
 bool logging = false;
+bool captureRequested = false;
 bool pausedForSerialTransfer = false;
 bool attitudeInitialized = false;
 uint8_t sensorWhoAmI = 0;
@@ -72,6 +76,37 @@ float pressureBaseline = 0.0f;
 
 char commandBuffer[96] = {};
 size_t commandLength = 0;
+
+// The RST button resets the CPU before firmware can run. Persisting this bit
+// lets the *next boot* interpret an external reset as the opposite collection
+// state: idle -> start, active -> stop. Power-on / USB boots deliberately
+// clear an unfinished active bit and stay idle, so simply plugging in USB never
+// creates a spurious session.
+bool readCaptureState(bool& configured, bool& active) {
+  configured = false;
+  active = false;
+  if (!preferences.begin("peckylog", false)) {
+    Serial.println("ERROR,PREFERENCES_OPEN_FAILED");
+    return false;
+  }
+  // ESP32 NVS keys are limited to 15 characters.
+  configured = preferences.isKey("cap_cfg");
+  active = configured && preferences.getBool("cap_active", false);
+  preferences.end();
+  return true;
+}
+
+bool persistCaptureState(bool active) {
+  if (!preferences.begin("peckylog", false)) {
+    Serial.println("ERROR,PREFERENCES_OPEN_FAILED");
+    return false;
+  }
+  const bool ok = preferences.putBool("cap_cfg", true) > 0 &&
+                  preferences.putBool("cap_active", active) > 0;
+  preferences.end();
+  if (!ok) Serial.println("ERROR,CAPTURE_STATE_SAVE_FAILED");
+  return ok;
+}
 
 int16_t makeInt16(uint8_t highByte, uint8_t lowByte) {
   return static_cast<int16_t>((static_cast<uint16_t>(highByte) << 8) | lowByte);
@@ -234,6 +269,13 @@ void closeLogFile() {
   logging = false;
 }
 
+void stopCapture(const char* reason) {
+  closeLogFile();
+  captureRequested = false;
+  persistCaptureState(false);
+  Serial.printf("INFO,CAPTURE_STOPPED,%s\n", reason);
+}
+
 bool openNewLogFile() {
   if (logging) return true;
   if (!preferences.begin("peckylog", false)) {
@@ -261,7 +303,12 @@ bool openNewLogFile() {
   lastStatusMs = sessionStartMs;
   sampleSequence = 0;
   logging = true;
+  if (!persistCaptureState(true)) {
+    closeLogFile();
+    return false;
+  }
   Serial.printf("INFO,LOGGING_STARTED,%s\n", activeFilename);
+  Serial.println("INFO,RST_TOGGLE,RECORDING_PRESS_RST_AGAIN_TO_STOP");
   Serial.println("INFO,SERIAL_COMMANDS,LIST | DUMP /hat_XXXX.csv | STATUS | ERASE_ALL");
   return true;
 }
@@ -341,8 +388,10 @@ void dumpFile(const String& filename) {
 }
 
 void printStatus() {
-  Serial.printf("STATUS,IMU=%s,LOG=%s,FILE=%s,USED=%u,TOTAL=%u\n",
-                imuReady ? "READY" : "NOT_READY", logging ? "ON" : "OFF",
+  Serial.printf("STATUS,IMU=%s,MODE=%s,LOG=%s,FILE=%s,USED=%u,TOTAL=%u\n",
+                imuReady ? "READY" : "NOT_READY",
+                captureRequested ? "CAPTURE" : "IDLE",
+                logging ? "ON" : "OFF",
                 activeFilename[0] ? activeFilename : "NONE",
                 static_cast<unsigned>(LittleFS.usedBytes()),
                 static_cast<unsigned>(LittleFS.totalBytes()));
@@ -357,7 +406,10 @@ void eraseAllLogs() {
     return;
   }
   activeFilename[0] = '\0';
+  captureRequested = false;
+  persistCaptureState(false);
   Serial.println("INFO,ERASE_ALL_COMPLETE");
+  Serial.println("INFO,CAPTURE_IDLE,PRESS_RST_ONCE_TO_START");
 }
 
 void executeCommand(char* rawCommand) {
@@ -445,7 +497,7 @@ void logSample() {
   if (rowLength <= 0 || static_cast<size_t>(rowLength) >= sizeof(row) ||
       logFile.print(row) == 0) {
     Serial.println("ERROR,LOG_WRITE_FAILED");
-    closeLogFile();
+    stopCapture("LOG_WRITE_FAILED");
     return;
   }
 
@@ -462,7 +514,7 @@ void logSample() {
   }
   if (logFile.size() >= kMaxLogBytes) {
     Serial.println("WARN,LOG_SIZE_LIMIT_REACHED,STOPPING_TO_PRESERVE_OLD_SESSIONS");
-    closeLogFile();
+    stopCapture("LOG_SIZE_LIMIT_REACHED");
   }
 }
 
@@ -480,7 +532,7 @@ void setup() {
   Serial.begin(kSerialBaud);
   delay(700);
   Serial.println();
-  Serial.println("INFO,PECKY_HAT_FLASH_LOGGER_V1");
+  Serial.println("INFO,PECKY_HAT_FLASH_LOGGER_V2_RST_TOGGLE");
   Serial.printf("INFO,PINS,SDA=%d,SCL=%d,PRESSURE_ADC=%d\n", kSdaPin, kSclPin,
                 kPressurePin);
 
@@ -496,6 +548,34 @@ void setup() {
   Serial.printf("INFO,LITTLEFS_READY,TOTAL=%u,USED=%u\n",
                 static_cast<unsigned>(LittleFS.totalBytes()),
                 static_cast<unsigned>(LittleFS.usedBytes()));
+
+  bool captureConfigured = false;
+  bool captureWasActive = false;
+  if (!readCaptureState(captureConfigured, captureWasActive)) return;
+
+  const esp_reset_reason_t resetReason = esp_reset_reason();
+  Serial.printf("INFO,RESET_REASON,%d\n", static_cast<int>(resetReason));
+
+  // USB insertion, battery power-on, upload and brownout resets never start a
+  // session. If power was removed while recording, that old file is already
+  // complete enough to download (we flush every 250 ms), so mark it closed.
+  if (resetReason != ESP_RST_EXT) {
+    if (!captureConfigured || captureWasActive) persistCaptureState(false);
+    Serial.println("INFO,CAPTURE_IDLE,PRESS_RST_ONCE_TO_START");
+    return;
+  }
+
+  // An external RST is the intended one-button toggle. Its prior state decides
+  // whether this boot starts the next participant or closes the previous one.
+  if (captureWasActive) {
+    persistCaptureState(false);
+    Serial.println("INFO,RST_TOGGLE,STOPPED");
+    Serial.println("INFO,CAPTURE_IDLE,PRESS_RST_ONCE_TO_START");
+    return;
+  }
+
+  captureRequested = true;
+  Serial.println("INFO,RST_TOGGLE,STARTING_KEEP_STILL_FOR_CALIBRATION");
   if (!initializeRun()) {
     Serial.println("ERROR,STARTUP_FAILED,RETRYING_EVERY_2_SECONDS");
   }
@@ -503,6 +583,10 @@ void setup() {
 
 void loop() {
   handleSerialCommands();
+  if (!captureRequested) {
+    delay(5);
+    return;
+  }
   if (!imuReady) {
     delay(2000);
     if (initializeRun()) Serial.println("INFO,RECOVERED_AND_LOGGING");

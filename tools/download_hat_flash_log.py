@@ -85,9 +85,10 @@ def dump_file(connection: serial.Serial, filename: str) -> bytes:
     connection.write((f"DUMP {filename}\n").encode("ascii"))
     connection.flush()
     end_marker = f"FILE_END,{filename}".encode("ascii")
-    # At 115200 baud a one-minute raw session can take around ten seconds;
-    # older sessions may be larger, so leave generous headroom.
-    response = read_until(connection, end_marker, timeout_s=90.0)
+    # At 115200 baud a one-minute raw session can take around ten seconds.
+    # A forgotten active session can exceed 1 MB and needs over 90 seconds, so
+    # leave enough headroom to preserve it before any flash cleanup.
+    response = read_until(connection, end_marker, timeout_s=180.0)
     header = f"FILE_BEGIN,{filename},".encode("ascii")
     header_start = response.find(header)
     if header_start < 0:
