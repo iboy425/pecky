@@ -1,0 +1,33 @@
+{
+  "name": "Pecky 啄米",
+  "short_name": "啄米",
+  "description": "把每一粒米攒成看得见的小愿望。",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#FFFEF9",
+  "theme_color": "#FFF0BE",
+  "categories": ["finance", "lifestyle"],
+  "icons": [
+    {
+      "src": "/assets/icons/pecky-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/icons/pecky-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/icons/pecky-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
