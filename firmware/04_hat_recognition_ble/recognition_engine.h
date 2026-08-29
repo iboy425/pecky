@@ -270,19 +270,24 @@ class NeckExtensionRecognizer {
           break;
         }
         if (signedAngle > maxAngleDeg_) maxAngleDeg_ = signedAngle;
-        if (signedAngle >= 12.0f && signedAngle <= 45.0f) {
+        // The assembled cap's physical mounting can amplify the pitch angle.
+        // Keep a broad safe range so a clinically normal extension reaches
+        // the hold phase instead of being rejected at the peak.
+        if (signedAngle >= 8.0f && signedAngle <= 65.0f) {
           state_ = State::kHold;
           holdCount_ = 1;
         }
         break;
 
       case State::kHold:
-        if (!directionSafe || signedAngle < 10.0f || signedAngle > 47.0f) {
+        if (!directionSafe || signedAngle < 6.0f || signedAngle > 70.0f) {
           reset();
           break;
         }
         if (signedAngle > maxAngleDeg_) maxAngleDeg_ = signedAngle;
-        if (++holdCount_ >= 12) {
+        // Three 25 Hz samples make a deliberate extension responsive while
+        // still rejecting a single IMU shock.
+        if (++holdCount_ >= 3) {
           holdMs_ = holdCount_ * kSamplePeriodMs;
           state_ = State::kReturn;
         }

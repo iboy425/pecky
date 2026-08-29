@@ -220,7 +220,10 @@ bool calibrateAtNeutral() {
       fmaxf(1.0f, 1.4826f * medianOf(pressureDeviations, kCalibrationSamples));
   const float accelerationStd = sqrtf(accelerationVariance * inverseCount);
   const float gyroMotionRms = sqrtf(gyroMotionEnergy * inverseCount);
-  if (accelerationStd > 0.05f || gyroMotionRms > 10.0f) {
+  // The installed MPU6500 has a stable resting gyro RMS around 12 dps. Keep
+  // enough margin for that measured hardware noise while still rejecting a
+  // genuinely moving calibration pose.
+  if (accelerationStd > 0.05f || gyroMotionRms > 18.0f) {
     Serial.printf("ERROR,CALIBRATION_MOVED,ACC_STD=%.3f,GYRO_RMS=%.1f,RETRY\n",
                   accelerationStd, gyroMotionRms);
     return false;
