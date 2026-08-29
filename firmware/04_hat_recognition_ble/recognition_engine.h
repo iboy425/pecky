@@ -293,18 +293,12 @@ class NeckExtensionRecognizer {
           break;
         }
         if (fabsf(signedAngle) > fabsf(maxAngleDeg_)) maxAngleDeg_ = signedAngle;
-        // Three 25 Hz samples make a deliberate extension responsive while
-        // still rejecting a single IMU shock. The physical cap's neutral
-        // estimator is noisy, so confirm the completed extension here rather
-        // than requiring a second neutral-stable window before emitting it.
+        // Three 25 Hz samples confirm the outward part of a deliberate
+        // extension. Do not count yet: wait for the head to return near its
+        // starting pitch so the UI responds after the full movement finishes.
         if (++holdCount_ >= 3) {
           holdMs_ = holdCount_ * kSamplePeriodMs;
-          result.valid = true;
-          result.action = ActionType::kNeckExtension;
-          result.confidence = clampf(0.60f + (fabsf(maxAngleDeg_) - 3.0f) / 67.0f,
-                                     0.60f, 0.98f);
-          result.durationMs = holdMs_;
-          reset();
+          state_ = State::kReturn;
         }
         break;
 
@@ -313,10 +307,12 @@ class NeckExtensionRecognizer {
           reset();
           break;
         }
-        if (features.neutralStable && fabsf(features.pitchDeltaDeg) < 6.0f) {
+        // Use the calibrated pitch return instead of the noisy raw gyro
+        // neutral flag, which is unreliable on the assembled cap.
+        if (fabsf(signedAngle) < 3.0f) {
           result.valid = true;
           result.action = ActionType::kNeckExtension;
-          result.confidence = clampf(0.60f + (maxAngleDeg_ - 12.0f) / 55.0f,
+          result.confidence = clampf(0.60f + (fabsf(maxAngleDeg_) - 3.0f) / 67.0f,
                                      0.60f, 0.98f);
           result.durationMs = holdMs_;
           reset();
