@@ -280,7 +280,9 @@ class NeckExtensionRecognizer {
         // The assembled cap's physical mounting can amplify the pitch angle.
         // Keep a broad safe range so a clinically normal extension reaches
         // the hold phase instead of being rejected at the peak.
-        if (fabsf(signedAngle) >= 3.0f && fabsf(signedAngle) <= 70.0f) {
+        // Reserve small front/back pulses for chin tuck; extension must reach
+        // a clearly larger angular excursion.
+        if (fabsf(signedAngle) >= 9.0f && fabsf(signedAngle) <= 70.0f) {
           state_ = State::kHold;
           holdCount_ = 1;
         }
@@ -309,7 +311,9 @@ class NeckExtensionRecognizer {
         }
         // Use the calibrated pitch return instead of the noisy raw gyro
         // neutral flag, which is unreliable on the assembled cap.
-        if (fabsf(signedAngle) < 3.0f) {
+        // The gravity filter can retain a small pitch residual after the cap
+        // returns, so a stable neutral window is also a valid completion.
+        if (fabsf(signedAngle) < 3.0f || features.neutralStable) {
           result.valid = true;
           result.action = ActionType::kNeckExtension;
           result.confidence = clampf(0.60f + (fabsf(maxAngleDeg_) - 3.0f) / 67.0f,
@@ -368,15 +372,16 @@ class ChinTuckRecognizer {
     switch (state_) {
       case State::kIdle:
         if (features.neutralStable) armed_ = true;
-        if (armed_ && fabsf(features.sagittalLinearG) >= 0.10f) {
+        if (armed_ && fabsf(features.sagittalLinearG) >= 0.07f) {
           const float sign = features.sagittalLinearG >= 0.0f ? 1.0f : -1.0f;
           if (onsetCount_ == 0 || sign == firstSign_) {
             firstSign_ = sign;
             if (fabsf(features.sagittalLinearG) > firstPeakAbs_) {
               firstPeakAbs_ = fabsf(features.sagittalLinearG);
             }
-            // Three consecutive samples rejects isolated walking/hat shocks.
-            if (++onsetCount_ >= 3) {
+            // Two consecutive samples rejects isolated walking/hat shocks
+            // while retaining the short natural chin-tuck pulse.
+            if (++onsetCount_ >= 2) {
               state_ = State::kFirstPulse;
               startMs_ = features.timeMs;
               maxOmegaDps_ = features.omegaDps;
@@ -393,7 +398,7 @@ class ChinTuckRecognizer {
       case State::kFirstPulse: {
         const uint32_t elapsed = features.timeMs - startMs_;
         if (features.omegaDps > maxOmegaDps_) maxOmegaDps_ = features.omegaDps;
-        if (elapsed > 1600 || maxOmegaDps_ > 65.0f) {
+        if (elapsed > 1800 || maxOmegaDps_ > 85.0f) {
           reset();
           break;
         }
