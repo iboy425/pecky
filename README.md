@@ -1,5 +1,9 @@
 # Pecky PWA
 
+项目仓库：<https://github.com/iboy425/pecky>  
+硬件物料清单：[`docs/BOM.md`](docs/BOM.md)  
+GitHub Topic：`shenicest-fission`
+
 Pecky is a mobile-first savings companion for the Pecky hardware concept. It turns hardware peck events into a shared rice-jar balance, compares that balance with multiple wishes, and preserves completed wishes as personal achievements.
 
 ## Product behavior
