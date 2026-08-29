@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
@@ -41,3 +42,57 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Locally captured motion data and trained artifacts
+data/**/*.csv
+data/**/*.parquet
+models/
+*.joblib
+
+# Local Arduino build output
+build/
+*.bin
+*.elf
+*.map
+
+# OS/editor files
+Thumbs.db
+.vscode/
+.idea/
+
+# Official source materials are kept locally; the GitHub repository tracks code.
+/硬件资料/
+=======
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Locally captured motion data and trained artifacts
+data/**/*.csv
+data/**/*.parquet
+models/
+*.joblib
+
+# Local Arduino build output
+build/
+*.bin
+*.elf
+*.map
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Official source materials are kept locally; the GitHub repository tracks code.
+/硬件资料/
+>>>>>>> origin/main

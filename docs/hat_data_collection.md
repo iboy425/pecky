@@ -1,0 +1,87 @@
+# 帽子三动作数据采集
+
+这份流程只使用当前帽子的硬件：ESP32-S3、帽内 IMU，以及已经接好的单个
+RFP602 压力通道。目标不是立刻硬编码阈值，而是先得到带时间标签的真实样本，
+再为这顶帽子和这位佩戴者调出可靠的动作判定。
+
+## 上电开始、断电结束
+
+当前板子的实体 `RST` 与普通上电复位无法可靠区分，因此采用最简单、稳定的采集
+方式：**接通电源开始，断开电源结束**。
+
+1. 先给参与者戴好帽子并固定传感器，再接通充电宝。
+2. 前三秒保持自然坐姿、头部正对前方；设备完成中立姿态与陀螺仪校准后自动创建
+   一个新 CSV，例如 `/hat_0015.csv`。
+3. 按固定动作脚本完成三类动作后，安静等待约一秒。
+4. **直接拔掉充电宝（或断开其 USB 线）结束本人的采集。**
+5. 换下一位后重新接通电源，即开始下一份独立文件。
+
+记录频率为 25 Hz，数据每 250 ms 落盘一次；突然断电最多丢失最后约四分之一秒。
+采集期间不要按 `RST`，因为它会重新开始一份新记录。
+
+每一行包含原始加速度、原始陀螺仪、压力原始值和当前阶段编号。
+原始数据比“已算好的次数”更有价值，后续可以重复调参数。
+
+## 一次采集的固定动作脚本
+
+从 **开始自动记录** 的时刻启动手机秒表；先后做下列动作。每个动作都慢做、回到
+中立、不要借助身体大幅前后移动。一次重置对应一位受试者的一份独立文件。
+
+| 秒表时间 | 固件标签 | 你要做什么 |
+|---|---|---|
+| 0–5 秒 | `0 / neutral_start` | 正常坐姿，头部中立，不做动作。 |
+| 5–17 秒 | `1 / neck_extension` | 后仰脖子 3 次：每次到位保持约2秒，再慢慢回中立。 |
+| 17–22 秒 | `2 / neutral_1` | 正常坐姿，作为负样本。 |
+| 22–34 秒 | `3 / chin_tuck` | 收下巴 3 次：头保持水平向后收，不低头、不点头；每次保持约2秒。 |
+| 34–39 秒 | `4 / neutral_2` | 正常坐姿，作为负样本。 |
+| 39–54 秒 | `5 / head_resistance` | 双手抱后脑勺抗阻 2 次：中立位用力保持5秒，再完全放松。 |
+| 54–60 秒 | `6 / normal_motion` | 低头、点头、左右转头、耸肩、自然调整；这些必须不计数。 |
+| 60 秒后 | `7 / free` | 不要继续走动或聊天；等待约一秒后断开充电宝。 |
+
+建议找 **10 位不同受试者**，每人完整做这60秒后断开充电宝；下一位重新接电开始。
+文件会依次变成 `/hat_0001.csv`、`/hat_0002.csv` ……；十位受试者的数据能同时保留在
+芯片内。
+
+## 记录前的硬件检查
+
+串口开机日志应有：
+
+```text
+INFO,WHO_AM_I,0x70
+INFO,POWER_ON,KEEP_STILL_FOR_CALIBRATION
+```
+
+开始采集后会依次出现：
+
+```text
+INFO,CALIBRATION_START,KEEP_HEAD_NEUTRAL_AND_STILL_FOR_3_SECONDS
+INFO,LOGGING_STARTED,/hat_0015.csv
+```
+
+`0x70` 对应当前已确认的 MPU6500 兼容模块，是正常的。压力传感器会记录在
+`pressure_raw` 列：现有三位受试者的数据已验证，在抗阻段出现了明显的非零压力值。
+
+如果连续看到 `WARN,PRESSURE_CHANNEL_SATURATED_OR_DISCONNECTED`，也照样采集
+IMU 数据；但请标注出来。此前压力值长期为 `4095` 说明 ADC 被 3.3V 顶满，之后
+需要修复分压接法：`3.3V → RFP602 → ADC(GPIO4) → 10kΩ → GND`。
+
+## 下载数据
+
+完成一个会话后，给帽子断电。之后用 USB 接回电脑、关闭 PuTTY 或 Arduino 串口监视器，
+在 Windows PowerShell 执行：
+
+```powershell
+cd \\wsl.localhost\Ubuntu-22.04\home\shenicest
+C:\Users\iboy\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe tools\download_hat_flash_log.py --port COM7 --all
+```
+
+插 USB 到电脑会自动开始一份新的当前会话；下载工具会自动跳过它，并把已完成记录
+下载到 `data/raw/hat_XXXX.csv`。下载完请拔掉 USB，避免留下无关的空白记录。若只想
+查看芯片内文件：
+
+```powershell
+C:\Users\iboy\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe tools\download_hat_flash_log.py --port COM7 --list
+```
+
+下载的 CSV 只保存在本地，不会提交到 GitHub。把文件路径发给我，我会基于真实数据
+计算每个动作的候选阈值，并把识别程序改为只给这三种动作计数。
