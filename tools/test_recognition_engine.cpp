@@ -92,11 +92,20 @@ bool testChinTuck() {
 }
 
 bool testPressureGateAndResistance() {
-  Harness disabled;
-  disabled.neutral(20);
-  disabled.repeat(80, 0.0f, 0.0f, 0.0f, 1200.0f);
-  disabled.neutral(30);
-  if (!expectEqual("resistance_disabled_without_self_test", disabled.counts[3], 0)) {
+  Harness staticPressure;
+  staticPressure.neutral(25);  // Automatically verifies the released channel.
+  staticPressure.repeat(60, 0.0f, 0.0f, 0.0f, 1200.0f);
+  staticPressure.neutral(30);
+  if (!expectEqual("static_pressure_is_not_resistance", staticPressure.counts[3], 0)) {
+    return false;
+  }
+
+  Harness automatic;
+  automatic.neutral(25);
+  automatic.repeat(3, 0.0f, 12.0f, 0.04f, 1200.0f);
+  automatic.repeat(38, 0.0f, 0.0f, 0.0f, 1200.0f);
+  automatic.neutral(40);
+  if (!expectEqual("automatic_pressure_arm_resistance_once", automatic.counts[3], 1)) {
     return false;
   }
 
@@ -110,7 +119,8 @@ bool testPressureGateAndResistance() {
     return false;
   }
 
-  harness.repeat(70, 0.0f, 0.0f, 0.0f, 1200.0f);
+  harness.repeat(3, 0.0f, 12.0f, 0.04f, 1200.0f);
+  harness.repeat(38, 0.0f, 0.0f, 0.0f, 1200.0f);
   harness.neutral(40);
   return expectEqual("head_resistance_once", harness.counts[3], 1) &&
          expectEqual("resistance_not_extension", harness.counts[1], 0) &&

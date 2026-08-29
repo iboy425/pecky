@@ -61,6 +61,7 @@ test("event adapters stamp their own source and reject duplicate sequences", () 
     deviceId: "PECKY-TEST",
     sequence: 1,
     peckCount: 3,
+    action: "head_resistance",
     amountDelta: 1.5,
     occurredAt: "2026-08-28T10:00:00.000Z",
   };
@@ -70,6 +71,22 @@ test("event adapters stamp their own source and reject duplicate sequences", () 
 
   assert.equal(first.added, 1);
   assert.equal(first.state.events.at(-1).source, "json");
+  assert.equal(first.state.events.at(-1).action, "head_resistance");
   assert.equal(second.added, 0);
   assert.equal(second.duplicates, 1);
+});
+
+test("unknown hardware action names are rejected", () => {
+  const demo = createDemoState();
+  const result = ingestExternalEvents(demo, [{
+    eventId: "bad-action",
+    deviceId: "PECKY-TEST",
+    sequence: 2,
+    peckCount: 1,
+    amountDelta: 1,
+    action: "ordinary_nod",
+    occurredAt: "2026-08-29T10:00:00.000Z",
+  }], "ble");
+  assert.equal(result.added, 0);
+  assert.equal(result.invalid.length, 1);
 });

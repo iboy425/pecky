@@ -15,10 +15,7 @@
  */
 
 #include <Arduino.h>
-#include <BLE2902.h>
-#include <BLEDevice.h>
-#include <BLEServer.h>
-#include <BLEUtils.h>
+#include <NimBLEDevice.h>
 #include <Preferences.h>
 #include <Wire.h>
 #include <math.h>
@@ -61,10 +58,10 @@ Preferences preferences;
 pecky::RecognitionEngine recognitionEngine;
 pecky::CalibrationProfile calibrationProfile;
 
-BLEServer* bleServer = nullptr;
-BLECharacteristic* eventCharacteristic = nullptr;
-BLECharacteristic* snapshotCharacteristic = nullptr;
-BLECharacteristic* commandCharacteristic = nullptr;
+NimBLEServer* bleServer = nullptr;
+NimBLECharacteristic* eventCharacteristic = nullptr;
+NimBLECharacteristic* snapshotCharacteristic = nullptr;
+NimBLECharacteristic* commandCharacteristic = nullptr;
 volatile bool bleConnected = false;
 volatile bool connectionChanged = false;
 volatile PendingCommand pendingCommand = PendingCommand::kNone;
@@ -248,7 +245,7 @@ bool isBleConnected() {
   return bleConnected && bleServer != nullptr && bleServer->getConnectedCount() > 0;
 }
 
-void notifyValue(BLECharacteristic* characteristic, const char* payload) {
+void notifyValue(NimBLECharacteristic* characteristic, const char* payload) {
   if (characteristic == nullptr) return;
   characteristic->setValue(payload);
   if (isBleConnected()) characteristic->notify();
@@ -328,21 +325,21 @@ void publishRecognition(const pecky::RecognitionEvent& event) {
   publishSnapshot(true);
 }
 
-class ServerCallbacks final : public BLEServerCallbacks {
-  void onConnect(BLEServer*) override {
+class ServerCallbacks final : public NimBLEServerCallbacks {
+  void onConnect(NimBLEServer*, NimBLEConnInfo&) override {
     bleConnected = true;
     connectionChanged = true;
   }
 
-  void onDisconnect(BLEServer*) override {
+  void onDisconnect(NimBLEServer*, NimBLEConnInfo&, int) override {
     bleConnected = false;
     connectionChanged = true;
   }
 };
 
-class CommandCallbacks final : public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic* characteristic) override {
-    const String value = characteristic->getValue();
+class CommandCallbacks final : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* characteristic, NimBLEConnInfo&) override {
+    const String value(characteristic->getValue().c_str());
     if (value.length() == 0 || value.length() > 120) return;
     if (value.indexOf("\"cmd\":\"sync\"") >= 0) {
       pendingCommand = PendingCommand::kSync;
@@ -357,33 +354,39 @@ class CommandCallbacks final : public BLECharacteristicCallbacks {
 };
 
 void initializeBle() {
+  Serial.println("INFO,BLE_INIT_START");
   char deviceName[24];
   snprintf(deviceName, sizeof(deviceName), "Pecky-%04X",
            static_cast<unsigned>(ESP.getEfuseMac() & 0xFFFF));
-  BLEDevice::init(deviceName);
-  BLEDevice::setMTU(185);
-  bleServer = BLEDevice::createServer();
+  NimBLEDevice::init(deviceName);
+  Serial.println("INFO,BLE_STACK_READY");
+  // The current wearable prototype only needs a sub-metre cap-to-phone link.
+  // Keep advertising/connection TX power low to reduce radio load after the
+  // controller has initialized. A brownout inside NimBLEDevice::init still
+  // requires a stable 5 V/USB power path; software must not mask it.
+  NimBLEDevice::setPower(-12);
+  NimBLEDevice::setMTU(185);
+  bleServer = NimBLEDevice::createServer();
   bleServer->setCallbacks(new ServerCallbacks());
   bleServer->advertiseOnDisconnect(true);
 
-  BLEService* service = bleServer->createService(kServiceUuid);
+  NimBLEService* service = bleServer->createService(kServiceUuid);
   eventCharacteristic = service->createCharacteristic(
-      kEventUuid, BLECharacteristic::PROPERTY_NOTIFY);
+      kEventUuid, NIMBLE_PROPERTY::NOTIFY);
   snapshotCharacteristic = service->createCharacteristic(
       kSnapshotUuid,
-      BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
+      NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
   commandCharacteristic = service->createCharacteristic(
       kCommandUuid,
-      BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
-  eventCharacteristic->addDescriptor(new BLE2902());
-  snapshotCharacteristic->addDescriptor(new BLE2902());
+      NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
   commandCharacteristic->setCallbacks(new CommandCallbacks());
   service->start();
 
-  BLEAdvertising* advertising = BLEDevice::getAdvertising();
+  NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
   advertising->addServiceUUID(kServiceUuid);
-  advertising->setScanResponse(true);
-  BLEDevice::startAdvertising();
+  advertising->enableScanResponse(true);
+  NimBLEDevice::startAdvertising();
+  Serial.println("INFO,BLE_ADVERTISING_STARTED");
   publishSnapshot(false);
   Serial.printf("INFO,BLE_READY,%s\n", deviceName);
 }
@@ -424,6 +427,9 @@ void handlePendingCommand() {
 void setup() {
   Serial.begin(kSerialBaud);
   delay(700);
+  // 80 MHz is ample for a 25 Hz state machine and leaves more supply margin
+  // for the BLE radio on the current prototype board.
+  if (!setCpuFrequencyMhz(80)) Serial.println("WARN,CPU_FREQUENCY_NOT_CHANGED");
   Serial.println();
   Serial.println("INFO,PECKY_THREE_RECOGNIZERS_BLE_V1");
   Serial.printf("INFO,PINS,SDA=%d,SCL=%d,PRESSURE_ADC=%d\n", kSdaPin, kSclPin,
@@ -442,12 +448,14 @@ void setup() {
   }
   while (!calibrateAtNeutral()) delay(1000);
 
+  Serial.println("INFO,NVS_INIT_START");
   preferences.begin("peckyrec", false);
   eventSequence = preferences.getUInt("event_seq", 0);
   lifetimeReps = preferences.getUInt("total_reps", 0);
   sessionId = preferences.getUInt("session_id", 0) + 1;
   sessionReps = 0;
   persistCounters();
+  Serial.println("INFO,NVS_INIT_DONE");
   initializeBle();
   nextSampleUs = micros() + kSamplePeriodUs;
 }

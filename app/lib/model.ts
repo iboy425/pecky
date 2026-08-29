@@ -12,6 +12,7 @@ export type RewardIconId =
   | "stocks";
 
 export type EventSource = "mock" | "json" | "ble";
+export type PeckyAction = "neck_extension" | "chin_tuck" | "head_resistance";
 
 export interface PeckyEvent {
   eventId: string;
@@ -19,6 +20,7 @@ export interface PeckyEvent {
   deviceId: string;
   sequence: number;
   peckCount: number;
+  action?: PeckyAction;
   amountMinor: number;
   occurredAt: string;
   receivedAt: string;
@@ -32,6 +34,7 @@ export interface ExternalPeckyEvent {
   deviceId: string;
   sequence: number;
   peckCount: number;
+  action?: PeckyAction;
   amountDelta: number;
   occurredAt: string;
 }
@@ -288,6 +291,7 @@ export function ingestExternalEvents(
     const deviceId = typeof raw.deviceId === "string" ? raw.deviceId.trim() : "";
     const sequence = Number(raw.sequence);
     const peckCount = Number(raw.peckCount);
+    const action = raw.action;
     const amountDelta = Number(raw.amountDelta);
     const occurredAt = typeof raw.occurredAt === "string" ? raw.occurredAt : "";
     const sequenceKey = `${deviceId}:${sequence}`;
@@ -308,7 +312,11 @@ export function ingestExternalEvents(
       peckCount <= 0 ||
       amountMinor <= 0 ||
       !occurredAt ||
-      Number.isNaN(Date.parse(occurredAt))
+      Number.isNaN(Date.parse(occurredAt)) ||
+      (action !== undefined &&
+        action !== "neck_extension" &&
+        action !== "chin_tuck" &&
+        action !== "head_resistance")
     ) {
       invalid.push(`第 ${index + 1} 条缺少字段或数值无效`);
       return;
@@ -338,6 +346,7 @@ export function ingestExternalEvents(
       deviceId,
       sequence,
       peckCount,
+      ...(action ? { action } : {}),
       amountMinor,
       occurredAt: new Date(occurredAt).toISOString(),
       receivedAt: timestamp,
