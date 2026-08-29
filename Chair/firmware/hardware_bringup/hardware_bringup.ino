@@ -56,6 +56,14 @@ struct RangeReading {
   float distanceCm = NAN;
 };
 
+struct MatrixEchoCapture {
+  bool initiallyHigh = false;
+  bool sawRise = false;
+  bool sawFall = false;
+  uint32_t riseAtUs = 0;
+  uint32_t pulseWidthUs = 0;
+};
+
 enum class DhtStatus {
   kOk,
   kNoResponse,
@@ -247,6 +255,120 @@ RangeReading readUltrasonic(const UltrasonicChannel& channel) {
 
   reading.status = RangeStatus::kOk;
   return reading;
+}
+
+void runUltrasonicMatrixAttempt(size_t triggerIndex, size_t attempt) {
+  MatrixEchoCapture captures[kUltrasonicCount];
+  for (size_t echoIndex = 0; echoIndex < kUltrasonicCount; ++echoIndex) {
+    captures[echoIndex].initiallyHigh =
+        digitalRead(kUltrasonicChannels[echoIndex].echoPin) == HIGH;
+  }
+
+  const UltrasonicChannel& triggerChannel =
+      kUltrasonicChannels[triggerIndex];
+  digitalWrite(triggerChannel.trigPin, LOW);
+  delayMicroseconds(3);
+  digitalWrite(triggerChannel.trigPin, HIGH);
+  delayMicroseconds(10);
+  const bool triggerReadbackHigh =
+      digitalRead(triggerChannel.trigPin) == HIGH;
+  digitalWrite(triggerChannel.trigPin, LOW);
+  const bool triggerReadbackLow = digitalRead(triggerChannel.trigPin) == LOW;
+
+  const uint32_t listenStartUs = micros();
+  while (micros() - listenStartUs < kEchoTimeoutUs) {
+    const uint32_t nowUs = micros();
+    for (size_t echoIndex = 0; echoIndex < kUltrasonicCount; ++echoIndex) {
+      MatrixEchoCapture& capture = captures[echoIndex];
+      if (capture.initiallyHigh || capture.sawFall) {
+        continue;
+      }
+
+      const bool isHigh =
+          digitalRead(kUltrasonicChannels[echoIndex].echoPin) == HIGH;
+      if (!capture.sawRise && isHigh) {
+        capture.sawRise = true;
+        capture.riseAtUs = nowUs;
+      } else if (capture.sawRise && !isHigh) {
+        capture.sawFall = true;
+        capture.pulseWidthUs = nowUs - capture.riseAtUs;
+      }
+    }
+  }
+
+  Serial.printf("MATRIX,TRIG=HC%u,TRIG_GPIO=%u,HIGH_READ=%u,LOW_READ=%u,"
+                "ATTEMPT=%u",
+                static_cast<unsigned>(triggerIndex + 1),
+                static_cast<unsigned>(triggerChannel.trigPin),
+                triggerReadbackHigh ? 1U : 0U,
+                triggerReadbackLow ? 1U : 0U,
+                static_cast<unsigned>(attempt + 1));
+  bool reported = false;
+  for (size_t echoIndex = 0; echoIndex < kUltrasonicCount; ++echoIndex) {
+    const MatrixEchoCapture& capture = captures[echoIndex];
+    if (capture.initiallyHigh) {
+      Serial.printf(",ECHO_HC%u=STUCK_HIGH",
+                    static_cast<unsigned>(echoIndex + 1));
+      reported = true;
+    } else if (capture.sawFall) {
+      const float distanceCm = capture.pulseWidthUs * 0.0343f * 0.5f;
+      Serial.printf(",ECHO_HC%u_US=%lu,ECHO_HC%u_CM=%.2f",
+                    static_cast<unsigned>(echoIndex + 1),
+                    static_cast<unsigned long>(capture.pulseWidthUs),
+                    static_cast<unsigned>(echoIndex + 1), distanceCm);
+      reported = true;
+    } else if (capture.sawRise) {
+      Serial.printf(",ECHO_HC%u=RISE_NO_FALL",
+                    static_cast<unsigned>(echoIndex + 1));
+      reported = true;
+    }
+  }
+  if (!reported) {
+    Serial.print(",NO_ECHO_ON_ANY_GPIO");
+  }
+  Serial.println();
+}
+
+void runEchoBiasProbe() {
+  Serial.println("ECHO_PROBE,START,WEAK_INTERNAL_PULL_TEST");
+  for (size_t echoIndex = 0; echoIndex < kUltrasonicCount; ++echoIndex) {
+    const uint8_t echoPin = kUltrasonicChannels[echoIndex].echoPin;
+
+    pinMode(echoPin, INPUT);
+    delay(2);
+    const int floatingLevel = digitalRead(echoPin);
+
+    pinMode(echoPin, INPUT_PULLUP);
+    delay(2);
+    const int pullupLevel = digitalRead(echoPin);
+
+    pinMode(echoPin, INPUT_PULLDOWN);
+    delay(2);
+    const int pulldownLevel = digitalRead(echoPin);
+
+    pinMode(echoPin, INPUT);
+    Serial.printf("ECHO_PROBE,HC%u,ECHO_GPIO=%u,INPUT=%d,PULLUP=%d,"
+                  "PULLDOWN=%d\n",
+                  static_cast<unsigned>(echoIndex + 1),
+                  static_cast<unsigned>(echoPin), floatingLevel, pullupLevel,
+                  pulldownLevel);
+  }
+  Serial.println("ECHO_PROBE,END");
+}
+
+void runUltrasonicMatrixTest() {
+  constexpr size_t kAttempts = 3;
+  Serial.println(
+      "MATRIX,START,TRIGGER_EACH_HC_AND_LISTEN_ON_ALL_ECHO_GPIOS");
+  for (size_t triggerIndex = 0; triggerIndex < kUltrasonicCount;
+       ++triggerIndex) {
+    for (size_t attempt = 0; attempt < kAttempts; ++attempt) {
+      runUltrasonicMatrixAttempt(triggerIndex, attempt);
+      delay(kUltrasonicGapMs);
+    }
+  }
+  runEchoBiasProbe();
+  Serial.println("MATRIX,END");
 }
 
 bool waitForDhtLevel(uint8_t level, uint32_t timeoutUs) {
@@ -514,6 +636,10 @@ void handleSerialCommand(char command) {
   }
   if (command == 'D') {
     printDhtCheck();
+    return;
+  }
+  if (command == 'X') {
+    runUltrasonicMatrixTest();
     return;
   }
 }
