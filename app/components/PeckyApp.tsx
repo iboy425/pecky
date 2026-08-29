@@ -238,7 +238,7 @@ export function PeckyApp() {
     window.setTimeout(() => {
       setOpeningPhase("ready");
       setOpeningBatch(null);
-    }, reducedMotion ? 90 : 720);
+    }, reducedMotion ? 90 : 860);
   }, [openingBatch, seedDemo, showToast]);
 
   useEffect(() => {
@@ -299,7 +299,10 @@ export function PeckyApp() {
   );
 
   const ingestFromSource = useCallback(
-    async (source: PeckyDataSource): Promise<boolean> => {
+    async (
+      source: PeckyDataSource,
+      options: { notify?: boolean } = {},
+    ): Promise<boolean> => {
       let unsubscribe: () => void = () => undefined;
       let connected = false;
       let primaryFailure = false;
@@ -309,15 +312,19 @@ export function PeckyApp() {
       const reportResult = (finalResult: ReturnType<typeof ingestExternalEvents>) => {
         if (finalResult.added > 0) {
           const ignored = finalResult.invalid.length + finalResult.duplicates;
-          showToast(
-            `已入账 ${formatMoney(finalResult.addedAmountMinor)}（${finalResult.addedPecks} 次啄米）${ignored ? `，忽略 ${ignored} 条` : ""}。刷新页面或彻底关闭后重开，会播放一次开屏。`,
-            "success",
-          );
+          if (options.notify !== false) {
+            showToast(
+              `已入账 ${formatMoney(finalResult.addedAmountMinor)}（${finalResult.addedPecks} 次啄米）${ignored ? `，忽略 ${ignored} 条` : ""}。刷新页面或彻底关闭后重开，会播放一次开屏。`,
+              "success",
+            );
+          }
           return true;
         } else if (finalResult.duplicates > 0 && finalResult.invalid.length === 0) {
-          showToast("没有新数据：这些记录已经入账", "info");
+          if (options.notify !== false) showToast("没有新数据：这些记录已经入账", "info");
         } else {
-          showToast(finalResult.invalid[0] ?? "数据包中没有可入账记录", "error");
+          if (options.notify !== false) {
+            showToast(finalResult.invalid[0] ?? "数据包中没有可入账记录", "error");
+          }
         }
         return false;
       };
@@ -390,6 +397,54 @@ export function PeckyApp() {
     [ingestFromSource, showToast],
   );
 
+  const simulateOpeningPreview = useCallback(
+    async (pecks: number, amount: number): Promise<boolean> => {
+      const received = await ingestFromSource(
+        new MockPeckyDataSource(pecks, amount),
+        { notify: false },
+      );
+      if (!received) return false;
+      setToast(null);
+
+      const result: { batch: OpeningBatch | null } = { batch: null };
+      try {
+        const next = await updatePeckyState(
+          (current) => {
+            const claimed = claimOpeningEvents(current);
+            const ids = new Set(claimed.eventIds);
+            const selected = current.events.filter((event) => ids.has(event.eventId));
+            if (selected.length > 0) {
+              result.batch = {
+                eventIds: claimed.eventIds,
+                pecks: selected.reduce((sum, event) => sum + event.peckCount, 0),
+                amountMinor: selected.reduce((sum, event) => sum + event.amountMinor, 0),
+              };
+            }
+            return claimed.state;
+          },
+          { seedDemo },
+        );
+
+        if (!result.batch) {
+          showToast("数据已入账，但没有待播放的开屏记录", "info");
+          return false;
+        }
+
+        setState(next);
+        setTab("jar");
+        setModal(null);
+        finishingOpening.current = false;
+        setOpeningBatch(result.batch);
+        setOpeningPhase("opening");
+        return true;
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : "开屏准备失败", "error");
+        return false;
+      }
+    },
+    [ingestFromSource, seedDemo, showToast],
+  );
+
   const handleInstall = useCallback(async () => {
     if (installPrompt) {
       await installPrompt.prompt();
@@ -457,12 +512,17 @@ export function PeckyApp() {
   }
 
   return (
-    <main className="app-shell">
+    <main
+      className="app-shell"
+      data-opening-phase={openingPhase}
+      data-opening-event-count={openingBatch?.eventIds.length ?? 0}
+    >
       <div className="page-stage">
         {tab === "jar" ? (
           <JarPage
             state={state}
             arrivalKey={jarArrivalKey}
+            artActive={openingPhase === "ready"}
             onAdd={() => setModal({ kind: "goal" })}
             onEdit={(goal) => setModal({ kind: "goal", goal })}
             onPurchase={(goal) => setConfirmation({ kind: "purchase", goal })}
@@ -491,6 +551,7 @@ export function PeckyApp() {
         <OpeningExperience
           batch={openingBatch}
           phase={openingPhase}
+          balanceMinor={state.currentBalanceMinor}
           soundEnabled={state.settings.soundEnabled}
           onFinish={finishOpening}
         />
@@ -547,6 +608,7 @@ export function PeckyApp() {
           onSimulate={(pecks, amount) =>
             ingestFromSource(new MockPeckyDataSource(pecks, amount))
           }
+          onPreview={simulateOpeningPreview}
           onJsonFile={handleJsonFile}
           onInstall={handleInstall}
           installAvailable={Boolean(installPrompt)}
@@ -575,11 +637,13 @@ export function PeckyApp() {
 function OpeningExperience({
   batch,
   phase,
+  balanceMinor,
   soundEnabled,
   onFinish,
 }: {
   batch: OpeningBatch;
   phase: OpeningPhase;
+  balanceMinor: number;
   soundEnabled: boolean;
   onFinish: () => void;
 }) {
@@ -612,17 +676,17 @@ function OpeningExperience({
       </div>
 
       <div className="opening-copy">
-        <p className="eyebrow">欢迎回来</p>
-        <h1>今天又攒下了 {batch.pecks} 粒米</h1>
-        <div className="opening-pill">+{batch.pecks} 粒米 · {formatMoney(batch.amountMinor)}</div>
+        <h1>欢迎回来</h1>
+        <p>今天又攒下了 {batch.pecks} 粒米</p>
       </div>
 
       <div className={`opening-media ${videoFailed ? "opening-media-fallback" : ""}`}>
+        <div className="opening-pill">+{batch.pecks} 粒米 · {formatMoney(batch.amountMinor)}</div>
         {!videoFailed && (
           <video
+            key={batch.eventIds.join(":")}
             ref={videoRef}
-            src="/assets/media/pecky-opening.mp4"
-            poster="/assets/jar-scene.webp"
+            src="/assets/media/pecky-opening.mp4?v=3"
             autoPlay
             playsInline
             muted={muted}
@@ -634,7 +698,6 @@ function OpeningExperience({
                 event.currentTarget.play().catch(() => setVideoFailed(true));
               });
             }}
-            onEnded={onFinish}
             onError={() => setVideoFailed(true)}
           />
         )}
@@ -645,6 +708,27 @@ function OpeningExperience({
         <p>正在装进你的小米罐…</p>
         <span>每一粒，都在靠近小愿望。</span>
       </div>
+
+      <div className="opening-jar-peek" aria-hidden="true">
+        <span className="opening-sheet-handle" />
+        <div className="opening-jar-summary">
+          <div>
+            <strong>我的米罐</strong>
+            <span>上拉看看愿望</span>
+          </div>
+          <b>{formatMoney(balanceMinor)}</b>
+        </div>
+        <div className="opening-mini-nav">
+          <div className="opening-mini-nav-active">
+            <PeckyIcon name="jar" />
+            <span>米罐</span>
+          </div>
+          <div>
+            <PeckyIcon name="person" />
+            <span>我的</span>
+          </div>
+        </div>
+      </div>
     </section>
   );
 }
@@ -652,6 +736,7 @@ function OpeningExperience({
 function JarPage({
   state,
   arrivalKey,
+  artActive,
   onAdd,
   onEdit,
   onPurchase,
@@ -659,6 +744,7 @@ function JarPage({
 }: {
   state: PeckyState;
   arrivalKey: number;
+  artActive: boolean;
   onAdd: () => void;
   onEdit: (goal: WishGoal) => void;
   onPurchase: (goal: WishGoal) => void;
@@ -681,7 +767,7 @@ function JarPage({
           <strong>{formatMoney(state.currentBalanceMinor)}</strong>
           <p>每一粒，都算数</p>
         </div>
-        <JarBalanceArt arrivalKey={arrivalKey} />
+        <JarBalanceArt arrivalKey={arrivalKey} active={artActive} />
       </section>
 
       <div className="section-heading">
@@ -748,7 +834,7 @@ function JarPage({
   );
 }
 
-function JarBalanceArt({ arrivalKey }: { arrivalKey: number }) {
+function JarBalanceArt({ arrivalKey, active }: { arrivalKey: number; active: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoFailed, setVideoFailed] = useState(false);
 
@@ -794,15 +880,16 @@ function JarBalanceArt({ arrivalKey }: { arrivalKey: number }) {
     }
     video.addEventListener("canplay", restart, { once: true });
     return () => video.removeEventListener("canplay", restart);
-  }, [arrivalKey, videoFailed]);
+  }, [active, arrivalKey, videoFailed]);
 
   return (
     <div className="balance-art" aria-hidden="true">
-      <img src="/assets/jar-still.webp" alt="" />
-      {!videoFailed && (
+      {!active || videoFailed ? (
+        <img src="/assets/jar-still.webp" alt="" />
+      ) : (
         <video
           ref={videoRef}
-          src="/assets/media/pecky-orbit.mp4"
+          src="/assets/media/pecky-orbit.mp4?v=3"
           autoPlay
           loop
           muted
@@ -1111,6 +1198,7 @@ function SettingsSheet({
   onClose,
   onSoundChange,
   onSimulate,
+  onPreview,
   onJsonFile,
   onInstall,
   installAvailable,
@@ -1121,6 +1209,7 @@ function SettingsSheet({
   onClose: () => void;
   onSoundChange: (enabled: boolean) => Promise<void>;
   onSimulate: (pecks: number, amount: number) => Promise<boolean>;
+  onPreview: (pecks: number, amount: number) => Promise<boolean>;
   onJsonFile: (file: File) => Promise<void>;
   onInstall: () => Promise<void>;
   installAvailable: boolean;
@@ -1141,12 +1230,8 @@ function SettingsSheet({
 
   const simulateAndPreviewOpening = async () => {
     setBusy(true);
-    const received = await onSimulate(Number(pecks), Number(amount));
-    if (!received) {
-      setBusy(false);
-      return;
-    }
-    window.setTimeout(() => window.location.reload(), 260);
+    const started = await onPreview(Number(pecks), Number(amount));
+    if (!started) setBusy(false);
   };
 
   const chooseFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1186,7 +1271,7 @@ function SettingsSheet({
 
         <section className="settings-group">
           <h3>硬件数据模拟器</h3>
-          <p className="settings-note">第一版用模拟器和 JSON 走同一条入账接口。想直接检查开屏，可模拟入账后自动刷新；这次数据只会播放一次。</p>
+          <p className="settings-note">第一版用模拟器和 JSON 走同一条入账接口。想直接检查开屏，可模拟入账并立即播放；这次数据只会播放一次。</p>
           <form className="simulator-form" onSubmit={simulate}>
             <label><span>啄米次数</span><input type="number" inputMode="numeric" min="1" step="1" value={pecks} onChange={(event) => setPecks(event.target.value)} /></label>
             <label><span>入账金额（元）</span><input type="number" inputMode="decimal" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} /></label>

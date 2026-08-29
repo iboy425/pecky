@@ -1,6 +1,10 @@
-import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import sharp from "sharp";
+
+const runFile = promisify(execFile);
 
 const projectRoot = process.cwd();
 const sourceRoot = path.resolve(projectRoot, "..");
@@ -73,6 +77,7 @@ async function prepareJarArt() {
     .toFile(path.join(outputRoot, "jar-scene.webp"));
 
   await sharp(sources.jarStill)
+    .linear([1, 1, 1], [6, 8, 3])
     .resize(560, 560, { fit: "contain" })
     .webp({ quality: 90, effort: 5 })
     .toFile(path.join(outputRoot, "jar-still.webp"));
@@ -247,15 +252,53 @@ async function prepareAchievementIcons() {
 }
 
 async function prepareVideo() {
+  const sharedVideoArgs = [
+    "-c:v",
+    "libx264",
+    "-preset",
+    "medium",
+    "-crf",
+    "20",
+    "-pix_fmt",
+    "yuv420p",
+    "-movflags",
+    "+faststart",
+  ];
+
   await Promise.all([
-    copyFile(
+    runFile("ffmpeg", [
+      "-y",
+      "-loglevel",
+      "error",
+      "-i",
       sources.openingVideo,
+      "-vf",
+      "lutrgb=r='min(val+30,255)':g='min(val+36,255)':b='min(val+41,255)'",
+      "-map",
+      "0:v:0",
+      "-map",
+      "0:a?",
+      ...sharedVideoArgs,
+      "-c:a",
+      "aac",
+      "-b:a",
+      "128k",
       path.join(outputRoot, "media", "pecky-opening.mp4"),
-    ),
-    copyFile(
+    ]),
+    runFile("ffmpeg", [
+      "-y",
+      "-loglevel",
+      "error",
+      "-i",
       sources.orbitVideo,
+      "-vf",
+      "lutrgb=r='min(val+35,255)':g='min(val+40,255)':b='min(val+23,255)'",
+      "-map",
+      "0:v:0",
+      ...sharedVideoArgs,
+      "-an",
       path.join(outputRoot, "media", "pecky-orbit.mp4"),
-    ),
+    ]),
   ]);
 }
 
