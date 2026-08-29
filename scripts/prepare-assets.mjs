@@ -35,6 +35,12 @@ const sources = {
     "pecky-me-achievements-v01me页面成就设计",
     "assets",
   ),
+  qingxianChair: path.join(
+    projectRoot,
+    "assets-source",
+    "achievements",
+    "qingxian-chair.png",
+  ),
   rewards: path.join(sourceRoot, "animation 新素材", "奖励图标合集"),
   approvedStocks: path.join(
     sourceRoot,
@@ -241,7 +247,7 @@ async function prepareAchievementIcons() {
     }),
   );
 
-  await sharp(path.join(sources.achievements, "wish-achieved-ricejar.png"))
+  await sharp(sources.qingxianChair)
     .trim({ background: { r: 0, g: 0, b: 0, alpha: 0 } })
     .resize(192, 192, {
       fit: "contain",

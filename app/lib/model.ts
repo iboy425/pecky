@@ -259,7 +259,7 @@ export function getAchievements(state: PeckyState): AchievementDefinition[] {
   return [
     { id: "first-grain", title: "第一粒米", description: "完成第一次啄米", image: "/assets/achievements/first-grain.webp", unlocked: state.lifetimePecks >= 1 },
     { id: "hundred-pecks", title: "百次啄米", description: "累计完成100次啄米", image: "/assets/achievements/hundred-pecks.webp", unlocked: state.lifetimePecks >= 100 },
-    { id: "wish-achieved", title: "心愿达成", description: "实现一个小愿望", image: "/assets/achievements/wish-achieved.webp", unlocked: state.purchases.length >= 1 },
+    { id: "wish-achieved", title: "清闲椅子", description: "解锁一把清闲椅子", image: "/assets/achievements/wish-achieved.webp", unlocked: state.purchases.length >= 1 },
   ];
 }
 
