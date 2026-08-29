@@ -38,12 +38,25 @@ def command(value: str) -> None:
 
 
 def reader() -> None:
-    while device and device.is_open:
-        raw = device.readline().decode("utf-8", "replace").strip()
-        if raw:
-            if raw.startswith(("ACTION,", "STATUS,", "ERROR,")):
-                log(f"SERIAL {raw}")
-            line_queue.put(raw)
+    try:
+        while device and device.is_open:
+            raw = device.readline().decode("utf-8", "replace").strip()
+            if raw:
+                if raw.startswith(("ACTION,", "STATUS,", "ERROR,")):
+                    log(f"SERIAL {raw}")
+                line_queue.put(raw)
+    except (serial.SerialException, OSError, TypeError):
+        pass
+
+
+def shutdown_device() -> None:
+    if not device or not device.is_open:
+        return
+    try:
+        command("PAUSE")
+    except (serial.SerialException, OSError):
+        pass
+    device.close()
 
 
 async def broadcast(line: str) -> None:
@@ -106,4 +119,10 @@ async def main() -> None:
                 pass
 
 
-asyncio.run(main())
+try:
+    asyncio.run(main())
+except KeyboardInterrupt:
+    pass
+finally:
+    shutdown_device()
+    log("CHAIR_BRIDGE_STOPPED")

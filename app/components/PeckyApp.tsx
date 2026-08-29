@@ -134,6 +134,7 @@ export function PeckyApp() {
   const bridgeSource = useRef<BridgePeckyDataSource | null>(null);
   const chairSource = useRef<ChairBridgeDataSource | null>(null);
   const bleUnsubscribe = useRef<(() => void) | null>(null);
+  const deviceLaunchHandled = useRef(false);
   const [bleConnection, setBleConnection] = useState<"disconnected" | "connecting" | "connected" | "unavailable">(
     typeof navigator !== "undefined" && "bluetooth" in navigator ? "disconnected" : "unavailable",
   );
@@ -553,6 +554,18 @@ export function PeckyApp() {
     if (source.getConnectionState() === "connected") { chairSource.current = source; setChairConnection("connected"); showToast("椅子已连接，已自动开始接收动作", "success"); }
     else setChairConnection(source.getConnectionState());
   }, [ingestFromSource, showToast]);
+
+  useEffect(() => {
+    if (deviceLaunchHandled.current || typeof window === "undefined") return;
+    const device = new URLSearchParams(window.location.search).get("device");
+    if (device !== "hat" && device !== "chair") return;
+    deviceLaunchHandled.current = true;
+    setTab("me");
+    setModal({ kind: "settings" });
+    window.setTimeout(() => {
+      void (device === "hat" ? handleBridgeToggle() : handleChairToggle());
+    }, 0);
+  }, [handleBridgeToggle, handleChairToggle]);
 
   useEffect(() => () => {
     bleUnsubscribe.current?.();

@@ -26,12 +26,24 @@ def command(value: str) -> None:
         log(f"COMMAND {value}")
 
 def reader() -> None:
-    while device and device.is_open:
-        raw = device.readline().decode("utf-8", "replace").strip()
-        if raw:
-            if raw.startswith(("EVENT,", "识别成功", "ERROR,", "PROGRESS,")):
-                log(f"SERIAL {raw}")
-            line_queue.put(raw)
+    try:
+        while device and device.is_open:
+            raw = device.readline().decode("utf-8", "replace").strip()
+            if raw:
+                if raw.startswith(("EVENT,", "识别成功", "ERROR,", "PROGRESS,")):
+                    log(f"SERIAL {raw}")
+                line_queue.put(raw)
+    except (serial.SerialException, OSError, TypeError):
+        pass
+
+def shutdown_device() -> None:
+    if not device or not device.is_open:
+        return
+    try:
+        command("PAUSE")
+    except (serial.SerialException, OSError):
+        pass
+    device.close()
 
 async def broadcast(line: str) -> None:
     if not line.startswith("EVENT,"): return
@@ -71,4 +83,10 @@ async def main() -> None:
             try: line = await asyncio.to_thread(line_queue.get, True, .5); await broadcast(line)
             except queue.Empty: pass
 
-asyncio.run(main())
+try:
+    asyncio.run(main())
+except KeyboardInterrupt:
+    pass
+finally:
+    shutdown_device()
+    log("BRIDGE_STOPPED")

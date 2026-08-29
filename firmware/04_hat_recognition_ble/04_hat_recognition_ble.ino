@@ -463,6 +463,10 @@ void handleSerialCommand(String command) {
   if (command == "START") {
     recognitionEnabled = true;
     recognitionEngine.resetSessionRecognition();
+    // PAUSE may last longer than half of the 32-bit micros() range. If the
+    // old deadline is retained, signed wraparound can make the sampler wait
+    // indefinitely after a later START. Always begin with a fresh deadline.
+    nextSampleUs = micros() + kSamplePeriodUs;
     Serial.println("CONTROL,STARTED");
   } else if (command == "PAUSE") {
     recognitionEnabled = false;
