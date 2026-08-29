@@ -92,6 +92,8 @@ Use the actual serial device paths shown by `arduino-cli board list`; do not ass
 
 Both devices boot calibrated but **paused**. Use the controller to decide exactly when a test starts, pauses, or recalibrates. Paused devices do not create BLE action notifications, so the app will not show captions or add cap events.
 
+The chair Bluetooth remains enabled while recognition is paused: `Qingxian-Chair` remains discoverable and reconnects automatically after an app disconnect. The current cap prototype uses its proven USB event stream because its radio brownouts at startup; do not select the cap BLE option until its 5 V supply and decoupling are repaired.
+
 ```bash
 # WSL terminal; the wrapper accesses Windows COM7/COM8 for you
 bash tools/control_devices_wsl.sh all status

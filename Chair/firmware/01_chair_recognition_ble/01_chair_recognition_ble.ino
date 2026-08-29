@@ -72,6 +72,9 @@ void setupBle() {
   NimBLEDevice::init("Qingxian-Chair");
   NimBLEDevice::setPower(-12);
   NimBLEServer* server = NimBLEDevice::createServer();
+  // Keep the chair discoverable after every app disconnect; recognition pause
+  // affects only action events, never the availability of the BLE service.
+  server->advertiseOnDisconnect(true);
   NimBLEService* service = server->createService(kServiceUuid);
   eventCharacteristic = service->createCharacteristic(kEventUuid, NIMBLE_PROPERTY::NOTIFY);
   service->start();
