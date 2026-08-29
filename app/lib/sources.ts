@@ -361,6 +361,42 @@ export class SerialPeckyDataSource implements PeckyDataSource {
   }
 }
 
+/** Receives cap events from the terminal-owned serial bridge. The browser
+ * never opens COM7, so terminal control and the app can run together. */
+export class BridgePeckyDataSource implements PeckyDataSource {
+  readonly id = "bridge" as const;
+  private connectionState: DataSourceConnectionState = "disconnected";
+  private socket: WebSocket | null = null;
+  private listeners = new Set<(batch: PeckyEventBatch) => void>();
+
+  getConnectionState(): DataSourceConnectionState { return this.connectionState; }
+  async connect(): Promise<void> {
+    if (this.socket?.readyState === WebSocket.OPEN) return;
+    this.connectionState = "connecting";
+    await new Promise<void>((resolve, reject) => {
+      const socket = new WebSocket("ws://127.0.0.1:8765");
+      this.socket = socket;
+      const fail = () => { this.connectionState = "disconnected"; reject(new Error("终端桥接未启动。请执行 bash tools/start_serial_bridge_wsl.sh")); };
+      socket.addEventListener("open", () => { this.connectionState = "connected"; resolve(); }, { once: true });
+      socket.addEventListener("error", fail, { once: true });
+      socket.addEventListener("message", (event) => this.handleMessage(event));
+      socket.addEventListener("close", () => { this.connectionState = "disconnected"; });
+    });
+  }
+  async disconnect(): Promise<void> {
+    this.socket?.close(); this.socket = null; this.connectionState = "disconnected";
+  }
+  async pull(): Promise<PeckyEventBatch> { return { events: [] }; }
+  subscribe(listener: (batch: PeckyEventBatch) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  private handleMessage(event: MessageEvent): void {
+    try {
+      const message = JSON.parse(String(event.data)) as { type?: string; event?: unknown };
+      if (message.type !== "event" || !message.event) return;
+      this.listeners.forEach((listener) => listener({ events: [message.event] }));
+    } catch { /* Ignore a malformed bridge packet. */ }
+  }
+}
+
 export class ChairBleDataSource implements PeckyDataSource {
   readonly id = "chair" as const;
   private connectionState: DataSourceConnectionState = "disconnected";

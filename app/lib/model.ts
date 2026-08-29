@@ -11,7 +11,7 @@ export type RewardIconId =
   | "gold"
   | "stocks";
 
-export type EventSource = "mock" | "json" | "ble" | "serial" | "chair";
+export type EventSource = "mock" | "json" | "ble" | "serial" | "bridge" | "chair";
 export type PeckyAction = "neck_extension" | "chin_tuck" | "head_resistance";
 
 export interface PeckyEvent {

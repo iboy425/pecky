@@ -2,24 +2,33 @@
 
 本手册按顺序执行即可完成一次稳定演示。当前固定映射为：帽子 `COM7`，椅子 `COM8`。两块设备完成开机校准后默认处于 **PAUSED**，不会产生识别事件；只有发出 `start` 后才开始测试。
 
-椅子 `Qingxian-Chair` 的蓝牙在上电后始终广播；暂停只停止动作事件，不会关闭蓝牙，因此可随时在软件中连接或断开重连。当前帽子原型的无线启动会供电掉电，演示时请使用 APP 的“USB 直连”接收帽子事件；在修复帽子的 5V 供电和去耦前，不要选择帽子 BLE 连接。
+椅子 `Qingxian-Chair` 的蓝牙在上电后始终广播；暂停只停止动作事件，不会关闭蓝牙，因此可随时在软件中连接或断开重连。当前帽子原型的无线启动会供电掉电，因此帽子使用终端桥接，不要选择帽子 BLE 连接。
 
 ## 0. 演示前一分钟检查
 
 1. 帽子与椅子均通过 USB 连接电脑；帽子戴好后保持头部中立，椅子周围传感器前方没有遮挡物。
 2. 打开 APP：<http://localhost:3001/>。在“我的 → 设置与数据”中分别连接 `Pecky-xxxx` 与 `Qingxian-Chair`，保持浏览器页面在前台。
-3. 在当前的 **WSL 终端**（提示符形如 `iboy@...:/home/...$`）执行：
+3. 在第一个 **WSL 终端**启动帽子桥接服务（该终端保持运行）：
 
 ```bash
 cd /home/shenicest
-bash tools/control_devices_wsl.sh all status
+bash tools/start_serial_bridge_wsl.sh
+```
+
+4. 在 APP 设置中点击 **“终端桥接（推荐）→ 连接”**。APP 连接后，帽子自动 `START`；APP 点“断开”或关闭页面后，帽子自动 `PAUSE`。
+5. 在第二个 WSL 终端检查状态：
+
+```bash
+cd /home/shenicest
+# 桥接运行时 COM7 由桥接服务独占；椅子仍可单独检查
+bash tools/control_devices_wsl.sh chair status
 ```
 
 两行都应包含 `CALIBRATED=1`，并且初始状态应为 `PAUSED`。若不是，执行第 1 节。
 
 ## 1. 一键准备（推荐每次演示前执行）
 
-先让演示者保持中立静止：帽子不要按压压力片，椅子不要坐人或保持演示起始坐姿。然后依次运行：
+先让演示者保持中立静止：帽子不要按压压力片，椅子不要坐人或保持演示起始坐姿。未启动桥接时可运行：
 
 ```bash
 bash tools/control_devices_wsl.sh all pause
@@ -34,16 +43,19 @@ bash tools/control_devices_wsl.sh all status
 
 确认两个设备均为 `PAUSED` 且 `CALIBRATED=1` 后，才开始正式展示。
 
+> 桥接服务启动后，APP 是帽子的唯一控制端：APP 连接即开始、APP 断开即暂停；不要再用控制脚本抢占 COM7。
+
 ## 2. 正式开始与暂停
 
 ```bash
-# 同时开始帽子和椅子识别
-bash tools/control_devices_wsl.sh all start
+# 帽子由 APP 的“终端桥接”连接自动开始；椅子单独开始
+bash tools/control_devices_wsl.sh chair start
 
 # 演示者依次做动作；APP 会显示“已识别 · 动作名”，两秒渐隐
 
 # 随时暂停；暂停后 APP 不会收到新的动作字幕
-bash tools/control_devices_wsl.sh all pause
+# APP 点击“终端桥接 → 断开”会暂停帽子；椅子单独暂停
+bash tools/control_devices_wsl.sh chair pause
 ```
 
 单独控制某一设备：

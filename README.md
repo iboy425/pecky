@@ -104,6 +104,16 @@ bash tools/control_devices_wsl.sh chair calibrate
 
 For the full on-site runbook—including calibration, the recommended action order, connection recovery, and reflashing—see [the Chinese demo command manual](docs/demo-command-manual.md).
 
+### Recommended cap connection: terminal bridge
+
+The cap's COM7 is exclusively owned by a small terminal bridge, preventing browser serial permissions and terminal controls from competing. Start it in one WSL terminal and leave it running:
+
+```bash
+bash tools/start_serial_bridge_wsl.sh
+```
+
+Then choose **终端桥接（推荐）→ 连接** in the app. Connecting starts recognition and streams action events into the rice jar; disconnecting pauses recognition automatically.
+
 `npm test` builds the vinext/Cloudflare output and verifies the rendered PWA shell, production metadata, opening state machine, persistence contract, adapters, and required web assets.
 
 ## Project structure
