@@ -938,23 +938,63 @@ function JarBalanceArt({
   active: boolean;
   heroRef: RefObject<HTMLDivElement | null>;
 }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const orbitStarted = useRef(false);
   const [videoFailed, setVideoFailed] = useState(false);
 
+  const startOrbit = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || videoFailed) return;
+
+    if (!orbitStarted.current) {
+      video.currentTime = 0;
+      orbitStarted.current = true;
+    }
+    void video.play().catch(() => undefined);
+  }, [videoFailed]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || videoFailed) return;
+
+    if (!active) {
+      video.pause();
+      if (video.readyState >= HTMLMediaElement.HAVE_METADATA) video.currentTime = 0;
+      orbitStarted.current = false;
+      return;
+    }
+
+    startOrbit();
+  }, [active, startOrbit, videoFailed]);
+
   return (
-    <div ref={heroRef} className="balance-art" aria-hidden="true">
-      {!active || videoFailed ? (
+    <div
+      ref={heroRef}
+      className="balance-art"
+      aria-hidden="true"
+      onAnimationStart={(event) => {
+        if (event.animationName === "hero-target-reveal") startOrbit();
+      }}
+    >
+      {videoFailed ? (
         <img src="/assets/jar-still.webp" alt="" />
       ) : (
         <video
+          ref={videoRef}
           className="balance-art-video"
-          src="/assets/media/pecky-orbit.mp4?v=4"
-          autoPlay
+          src="/assets/media/pecky-orbit.mp4?v=6"
           loop
           muted
           playsInline
           preload="auto"
-          poster="/assets/jar-still.webp"
-          onError={() => setVideoFailed(true)}
+          poster="/assets/media/pecky-orbit-poster.jpg?v=6"
+          onCanPlay={() => {
+            if (active || orbitStarted.current) startOrbit();
+          }}
+          onError={() => {
+            orbitStarted.current = false;
+            setVideoFailed(true);
+          }}
         />
       )}
     </div>

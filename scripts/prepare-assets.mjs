@@ -317,6 +317,24 @@ async function prepareVideo() {
       "-an",
       path.join(outputRoot, "media", "pecky-orbit.mp4"),
     ]),
+    runFile("ffmpeg", [
+      "-y",
+      "-loglevel",
+      "error",
+      "-ss",
+      "0.04",
+      "-i",
+      sources.orbitVideo,
+      "-frames:v",
+      "1",
+      "-vf",
+      "lutrgb=r='min(val+35,255)':g='min(val+40,255)':b='min(val+23,255)'",
+      "-c:v",
+      "mjpeg",
+      "-q:v",
+      "3",
+      path.join(outputRoot, "media", "pecky-orbit-poster.jpg"),
+    ]),
   ]);
 }
 
