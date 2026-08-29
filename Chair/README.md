@@ -13,6 +13,9 @@
 
 风扇不在当前范围内。前三个动作的识别率需要在硬件通过后，通过真实数据采集、按参与者隔离训练/测试和盲测验证；本固件只负责证明各传感器通道可用。
 
+动作数据采集阶段只使用 5 路超声、MPU 和蜂鸣器，不读取 DHT11；
+DHT11 只保留在独立的硬件自检固件中。
+
 ## 目录
 
 ```text
@@ -21,8 +24,14 @@ Chair/
   firmware/
     hardware_bringup/
       hardware_bringup.ino
+    data_collection/
+      data_collection.ino
   tools/
     check_com8.py
+    capture_actions_com8.py
+    run_capture_com8.sh
+  data/
+    .gitignore
 ```
 
 ## 固定引脚
@@ -87,3 +96,21 @@ python Chair\tools\check_com8.py --seconds 25
 ```
 
 该脚本不会列出串口，也不会自动选择串口；代码中只允许打开 `COM8`。
+
+## 三动作数据采集
+
+`data_collection.ino` 上电后立即以约 6.25 帧/秒输出 5 路超声和
+MPU 数据。固件不读取温度；`N`、`L`、`R`、`C`分别建立正常坐姿、
+左拉伸、右拉伸和胸椎舒展的固定 3000ms 标注窗口，蜂鸣器提示开始与结束。
+
+在本项目的 VS Code WSL 终端运行：
+
+```bash
+cd /home/shenicest
+Chair/tools/run_capture_com8.sh --guided --participant P01 --session S01 \
+  --repetitions 1 --seed 20260829
+```
+
+终端会逐项显示动作，等待操作者按 Enter，倒数后自动采集 3 秒。
+正式采集时增加 `--repetitions`；CSV 写入 `Chair/data/`，并由该目录的
+`.gitignore` 排除，不得提交参与者数据。
