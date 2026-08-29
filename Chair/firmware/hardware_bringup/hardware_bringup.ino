@@ -257,7 +257,18 @@ RangeReading readUltrasonic(const UltrasonicChannel& channel) {
   return reading;
 }
 
-void runUltrasonicMatrixAttempt(size_t triggerIndex, size_t attempt) {
+void runUltrasonicMatrixAttempt(size_t triggerIndex, size_t attempt,
+                                bool isolateOtherTriggers) {
+  for (size_t index = 0; index < kUltrasonicCount; ++index) {
+    if (isolateOtherTriggers && index != triggerIndex) {
+      pinMode(kUltrasonicChannels[index].trigPin, INPUT);
+    } else {
+      pinMode(kUltrasonicChannels[index].trigPin, OUTPUT);
+      digitalWrite(kUltrasonicChannels[index].trigPin, LOW);
+    }
+  }
+  delay(2);
+
   MatrixEchoCapture captures[kUltrasonicCount];
   for (size_t echoIndex = 0; echoIndex < kUltrasonicCount; ++echoIndex) {
     captures[echoIndex].initiallyHigh =
@@ -296,8 +307,9 @@ void runUltrasonicMatrixAttempt(size_t triggerIndex, size_t attempt) {
     }
   }
 
-  Serial.printf("MATRIX,TRIG=HC%u,TRIG_GPIO=%u,HIGH_READ=%u,LOW_READ=%u,"
-                "ATTEMPT=%u",
+  Serial.printf("MATRIX,MODE=%s,TRIG=HC%u,TRIG_GPIO=%u,HIGH_READ=%u,"
+                "LOW_READ=%u,ATTEMPT=%u",
+                isolateOtherTriggers ? "ISOLATED" : "NORMAL",
                 static_cast<unsigned>(triggerIndex + 1),
                 static_cast<unsigned>(triggerChannel.trigPin),
                 triggerReadbackHigh ? 1U : 0U,
@@ -327,6 +339,11 @@ void runUltrasonicMatrixAttempt(size_t triggerIndex, size_t attempt) {
     Serial.print(",NO_ECHO_ON_ANY_GPIO");
   }
   Serial.println();
+
+  for (const UltrasonicChannel& channel : kUltrasonicChannels) {
+    pinMode(channel.trigPin, OUTPUT);
+    digitalWrite(channel.trigPin, LOW);
+  }
 }
 
 void runEchoBiasProbe() {
@@ -363,11 +380,25 @@ void runUltrasonicMatrixTest() {
   for (size_t triggerIndex = 0; triggerIndex < kUltrasonicCount;
        ++triggerIndex) {
     for (size_t attempt = 0; attempt < kAttempts; ++attempt) {
-      runUltrasonicMatrixAttempt(triggerIndex, attempt);
+      runUltrasonicMatrixAttempt(triggerIndex, attempt, false);
       delay(kUltrasonicGapMs);
     }
   }
   runEchoBiasProbe();
+  Serial.println("MATRIX,END");
+}
+
+void runIsolatedTriggerMatrixTest() {
+  constexpr size_t kAttempts = 3;
+  Serial.println(
+      "MATRIX,START,ISOLATE_NON_SELECTED_TRIG_GPIOS_AND_LISTEN_ALL_ECHOS");
+  for (size_t triggerIndex = 0; triggerIndex < kUltrasonicCount;
+       ++triggerIndex) {
+    for (size_t attempt = 0; attempt < kAttempts; ++attempt) {
+      runUltrasonicMatrixAttempt(triggerIndex, attempt, true);
+      delay(kUltrasonicGapMs);
+    }
+  }
   Serial.println("MATRIX,END");
 }
 
@@ -640,6 +671,10 @@ void handleSerialCommand(char command) {
   }
   if (command == 'X') {
     runUltrasonicMatrixTest();
+    return;
+  }
+  if (command == 'Y') {
+    runIsolatedTriggerMatrixTest();
     return;
   }
 }
