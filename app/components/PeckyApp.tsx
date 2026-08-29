@@ -43,7 +43,7 @@ import {
 import {
   BlePeckyDataSource,
   BridgePeckyDataSource,
-  ChairBleDataSource,
+  ChairBridgeDataSource,
   SerialPeckyDataSource,
   JsonImportDataSource,
   MockPeckyDataSource,
@@ -132,8 +132,7 @@ export function PeckyApp() {
   const bleSource = useRef<BlePeckyDataSource | null>(null);
   const serialSource = useRef<SerialPeckyDataSource | null>(null);
   const bridgeSource = useRef<BridgePeckyDataSource | null>(null);
-  const chairSource = useRef<ChairBleDataSource | null>(null);
-  const chairUnsubscribe = useRef<(() => void) | null>(null);
+  const chairSource = useRef<ChairBridgeDataSource | null>(null);
   const bleUnsubscribe = useRef<(() => void) | null>(null);
   const [bleConnection, setBleConnection] = useState<"disconnected" | "connecting" | "connected" | "unavailable">(
     typeof navigator !== "undefined" && "bluetooth" in navigator ? "disconnected" : "unavailable",
@@ -142,9 +141,7 @@ export function PeckyApp() {
     typeof navigator !== "undefined" && "serial" in navigator ? "disconnected" : "unavailable",
   );
   const [bridgeConnection, setBridgeConnection] = useState<"disconnected" | "connecting" | "connected" | "unavailable">("disconnected");
-  const [chairConnection, setChairConnection] = useState<"disconnected" | "connecting" | "connected" | "unavailable">(
-    typeof navigator !== "undefined" && "bluetooth" in navigator ? "disconnected" : "unavailable",
-  );
+  const [chairConnection, setChairConnection] = useState<"disconnected" | "connecting" | "connected" | "unavailable">("disconnected");
 
   const showToast = useCallback(
     (message: string, tone: "info" | "success" | "error" = "info") => {
@@ -465,14 +462,16 @@ export function PeckyApp() {
         primaryFailure = true;
         showToast(error instanceof Error ? error.message : "数据接收失败", "error");
       } finally {
-        if (options.keepConnected && connected && !primaryFailure && (source instanceof BlePeckyDataSource || source instanceof SerialPeckyDataSource || source instanceof BridgePeckyDataSource)) {
+        if (options.keepConnected && connected && !primaryFailure && (source instanceof BlePeckyDataSource || source instanceof SerialPeckyDataSource || source instanceof BridgePeckyDataSource || source instanceof ChairBridgeDataSource)) {
           if (source instanceof BlePeckyDataSource) bleSource.current = source;
           else if (source instanceof SerialPeckyDataSource) serialSource.current = source;
-          else bridgeSource.current = source;
+          else if (source instanceof BridgePeckyDataSource) bridgeSource.current = source;
+          else chairSource.current = source;
           bleUnsubscribe.current = unsubscribe;
           if (source instanceof BlePeckyDataSource) setBleConnection("connected");
           else if (source instanceof SerialPeckyDataSource) setSerialConnection("connected");
-          else setBridgeConnection("connected");
+          else if (source instanceof BridgePeckyDataSource) setBridgeConnection("connected");
+          else setChairConnection("connected");
         } else {
           unsubscribe();
         }
@@ -545,21 +544,21 @@ export function PeckyApp() {
   const handleChairToggle = useCallback(async () => {
     if (chairSource.current) {
       const source = chairSource.current;
-      chairUnsubscribe.current?.(); chairUnsubscribe.current = null; chairSource.current = null;
+      chairSource.current = null;
       await source.disconnect(); setChairConnection("disconnected"); showToast("椅子已断开", "info"); return;
     }
     setChairConnection("connecting");
-    const source = new ChairBleDataSource(); await source.connect(); chairSource.current = source;
-    chairUnsubscribe.current = source.subscribe((batch) => batch.recognizedActions?.forEach((item) => setActionCaption({ key: Date.now() + Math.random(), label: item.label })));
-    setChairConnection("connected"); showToast("椅子已连接，动作完成后会立即提示", "success");
-  }, [showToast]);
+    const source = new ChairBridgeDataSource();
+    await ingestFromSource(source, { notify: false, keepConnected: true });
+    if (source.getConnectionState() === "connected") { chairSource.current = source; setChairConnection("connected"); showToast("椅子已连接，已自动开始接收动作", "success"); }
+    else setChairConnection(source.getConnectionState());
+  }, [ingestFromSource, showToast]);
 
   useEffect(() => () => {
     bleUnsubscribe.current?.();
     void bleSource.current?.disconnect();
     void serialSource.current?.disconnect();
     void bridgeSource.current?.disconnect();
-    chairUnsubscribe.current?.();
     void chairSource.current?.disconnect();
   }, []);
 
@@ -1553,9 +1552,9 @@ function SettingsSheet({
         </section>
         <section className="ble-card">
           <div className="ble-icon"><PeckyIcon name="bluetooth" /></div>
-          <div><h3>清闲椅子</h3><p>{chairConnection === "connected" ? "实时接收拉伸和舒展动作" : "连接后，椅子本地识别并立即提示"}</p></div>
-          <button type="button" disabled={busy || chairConnection === "unavailable"} onClick={async () => { setBusy(true); await onChairToggle(); setBusy(false); }}>
-            {chairConnection === "connected" ? "断开" : chairConnection === "connecting" ? "连接中" : chairConnection === "unavailable" ? "浏览器不支持" : "连接"}
+          <div><h3>清闲椅子终端桥接</h3><p>{chairConnection === "connected" ? "APP 正在接收椅子动作；断开会自动暂停" : "终端启动椅子桥接后，APP 连接即自动开始"}</p></div>
+          <button type="button" disabled={busy || chairConnection === "connecting"} onClick={async () => { setBusy(true); await onChairToggle(); setBusy(false); }}>
+            {chairConnection === "connected" ? "断开" : chairConnection === "connecting" ? "连接中" : "连接"}
           </button>
         </section>
 

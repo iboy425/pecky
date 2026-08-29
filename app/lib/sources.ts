@@ -392,7 +392,58 @@ export class BridgePeckyDataSource implements PeckyDataSource {
     try {
       const message = JSON.parse(String(event.data)) as { type?: string; event?: unknown };
       if (message.type !== "event" || !message.event) return;
-      this.listeners.forEach((listener) => listener({ events: [message.event] }));
+      const payload = message.event as { action?: unknown };
+      const action = typeof payload.action === "string" ? payload.action : null;
+      const label = action === "neck_extension" || action === "chin_tuck" || action === "head_resistance"
+        ? hatActionLabel(action)
+        : null;
+      this.listeners.forEach((listener) => listener({
+        events: [message.event],
+        ...(label ? { recognizedActions: [{ device: "hat" as const, action, label }] } : {}),
+      }));
+    } catch { /* Ignore a malformed bridge packet. */ }
+  }
+}
+
+/** Receives chair events from the second terminal-owned serial bridge.
+ * COM8 remains owned by the terminal, while this source is independently
+ * connectable from the same settings screen as the cap bridge. */
+export class ChairBridgeDataSource implements PeckyDataSource {
+  readonly id = "chair" as const;
+  private connectionState: DataSourceConnectionState = "disconnected";
+  private socket: WebSocket | null = null;
+  private listeners = new Set<(batch: PeckyEventBatch) => void>();
+
+  getConnectionState(): DataSourceConnectionState { return this.connectionState; }
+  async connect(): Promise<void> {
+    if (this.socket?.readyState === WebSocket.OPEN) return;
+    this.connectionState = "connecting";
+    await new Promise<void>((resolve, reject) => {
+      const socket = new WebSocket("ws://127.0.0.1:8766");
+      this.socket = socket;
+      const fail = () => { this.connectionState = "disconnected"; reject(new Error("椅子终端桥接未启动。请执行 bash tools/start_chair_serial_bridge_wsl.sh")); };
+      socket.addEventListener("open", () => { this.connectionState = "connected"; resolve(); }, { once: true });
+      socket.addEventListener("error", fail, { once: true });
+      socket.addEventListener("message", (event) => this.handleMessage(event));
+      socket.addEventListener("close", () => { this.connectionState = "disconnected"; });
+    });
+  }
+  async disconnect(): Promise<void> {
+    this.socket?.close(); this.socket = null; this.connectionState = "disconnected";
+  }
+  async pull(): Promise<PeckyEventBatch> { return { events: [] }; }
+  subscribe(listener: (batch: PeckyEventBatch) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  private handleMessage(event: MessageEvent): void {
+    try {
+      const message = JSON.parse(String(event.data)) as { type?: string; event?: unknown; recognizedAction?: unknown };
+      if (message.type !== "event" || !message.event) return;
+      const candidate = message.recognizedAction as { action?: unknown; label?: unknown } | undefined;
+      const action = typeof candidate?.action === "string" ? candidate.action : null;
+      const label = action ? chairActionLabel(action) : null;
+      this.listeners.forEach((listener) => listener({
+        events: [message.event],
+        ...(label ? { recognizedActions: [{ device: "chair" as const, action: action!, label }] } : {}),
+      }));
     } catch { /* Ignore a malformed bridge packet. */ }
   }
 }

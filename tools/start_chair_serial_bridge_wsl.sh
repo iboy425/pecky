@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+script="$(wslpath -w "$root/tools/chair_serial_bridge.py")"
+exec powershell.exe -NoProfile -Command "& py -3 '$script'"
