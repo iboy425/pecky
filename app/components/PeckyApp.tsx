@@ -103,8 +103,9 @@ function dateLabel(value: string): string {
 }
 
 function getSeedDemoMode(): boolean {
-  if (process.env.NODE_ENV === "development") return true;
   if (typeof window === "undefined") return false;
+  // Demo data must never be the default. It is only available with an explicit
+  // URL flag, so a real hat session always starts at ¥0.
   return new URLSearchParams(window.location.search).get("demo") === "1";
 }
 

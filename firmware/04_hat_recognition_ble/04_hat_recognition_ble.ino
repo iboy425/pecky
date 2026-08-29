@@ -32,6 +32,9 @@ constexpr uint32_t kSerialBaud = 115200;
 constexpr uint32_t kSamplePeriodUs = 40000;
 constexpr uint32_t kProgressPeriodMs = 200;
 constexpr uint8_t kGroupTarget = 3;
+// The assembled wearable currently brownouts at BLE radio start. Keep the
+// local recognizer and USB EVENT stream alive for the live demo.
+constexpr bool kEnableBleRadio = false;
 
 constexpr uint8_t kRegSampleRateDivider = 0x19;
 constexpr uint8_t kRegConfig = 0x1A;
@@ -308,6 +311,16 @@ void publishRecognition(const pecky::RecognitionEvent& event) {
            static_cast<unsigned long>(event.durationMs),
            static_cast<unsigned>(event.confidence * 100.0f),
            static_cast<unsigned long>(millis()));
+  const char* actionZh = "未知动作";
+  switch (static_cast<unsigned>(event.action)) {
+    case 1: actionZh = "后仰脖子"; break;
+    case 2: actionZh = "收下巴"; break;
+    case 3: actionZh = "抱头抗阻"; break;
+  }
+  Serial.printf("识别成功：%s｜第%lu次｜置信度%u%%｜持续%lums\n",
+                actionZh, static_cast<unsigned long>(lifetimeReps),
+                static_cast<unsigned>(event.confidence * 100.0f),
+                static_cast<unsigned long>(event.durationMs));
   Serial.printf("EVENT,%s,%s\n", pecky::actionName(event.action), payload);
   notifyValue(eventCharacteristic, payload);
 
@@ -456,7 +469,8 @@ void setup() {
   sessionReps = 0;
   persistCounters();
   Serial.println("INFO,NVS_INIT_DONE");
-  initializeBle();
+  if (kEnableBleRadio) initializeBle();
+  else Serial.println("INFO,USB_EVENT_MODE_READY");
   nextSampleUs = micros() + kSamplePeriodUs;
 }
 
