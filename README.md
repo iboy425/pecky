@@ -92,12 +92,12 @@ Use the actual serial device paths shown by `arduino-cli board list`; do not ass
 
 Both devices boot calibrated but **paused**. Use the controller to decide exactly when a test starts, pauses, or recalibrates. Paused devices do not create BLE action notifications, so the app will not show captions or add cap events.
 
-```powershell
-# Windows PowerShell (not the WSL `iboy@...$` shell; cap is COM7, chair is COM8)
-py -3 tools\control_devices.py all status
-py -3 tools\control_devices.py all start
-py -3 tools\control_devices.py hat pause
-py -3 tools\control_devices.py chair calibrate
+```bash
+# WSL terminal; the wrapper accesses Windows COM7/COM8 for you
+bash tools/control_devices_wsl.sh all status
+bash tools/control_devices_wsl.sh all start
+bash tools/control_devices_wsl.sh hat pause
+bash tools/control_devices_wsl.sh chair calibrate
 ```
 
 For the full on-site runbook—including calibration, the recommended action order, connection recovery, and reflashing—see [the Chinese demo command manual](docs/demo-command-manual.md).
