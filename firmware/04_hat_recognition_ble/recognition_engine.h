@@ -251,16 +251,16 @@ class NeckExtensionRecognizer {
     }
     const float signedAngle = extensionSign_ * features.pitchDeltaDeg;
     const float signedRate = extensionSign_ * features.pitchRateDps;
-    const bool directionSafe = fabsf(features.rollDeltaDeg) < 18.0f &&
-                               fabsf(features.yawRateDps) < 80.0f;
+    const bool directionSafe = fabsf(features.rollDeltaDeg) < 12.0f &&
+                               fabsf(features.yawRateDps) < 55.0f;
 
     switch (state_) {
       case State::kIdle:
         if (features.neutralStable) armed_ = true;
-        // The sensor is mounted face-out on the cap. extensionSign describes
-        // that fixed installation, so only the outward pitch direction is a
-        // neck extension; the opposite motion is reserved for chin-tuck.
-        if (armed_ && signedRate > 12.0f && directionSafe) {
+        // The photo establishes the board face, but not the MEMS chip's
+        // signed pitch axis. Accept either sagittal sign for this gesture;
+        // the return-to-start rule still rejects isolated bumps.
+        if (armed_ && fabsf(features.pitchRateDps) > 8.0f && directionSafe) {
           if (++onsetCount_ >= 2) {
             state_ = State::kMoving;
             startMs_ = features.timeMs;
@@ -280,14 +280,15 @@ class NeckExtensionRecognizer {
         // The assembled cap's physical mounting can amplify the pitch angle.
         // Keep a broad safe range so a clinically normal extension reaches
         // the hold phase instead of being rejected at the peak.
-        if (signedAngle >= 6.0f && signedAngle <= 70.0f) {
+        if (fabsf(signedAngle) >= 3.0f && fabsf(signedAngle) <= 70.0f) {
           state_ = State::kHold;
           holdCount_ = 1;
         }
         break;
 
       case State::kHold:
-        if (!directionSafe || signedAngle < 3.0f || signedAngle > 75.0f) {
+        if (!directionSafe || fabsf(signedAngle) < 2.0f ||
+            fabsf(signedAngle) > 75.0f) {
           reset();
           break;
         }
@@ -308,10 +309,10 @@ class NeckExtensionRecognizer {
         }
         // Use the calibrated pitch return instead of the noisy raw gyro
         // neutral flag, which is unreliable on the assembled cap.
-        if (signedAngle < 3.0f) {
+        if (fabsf(signedAngle) < 3.0f) {
           result.valid = true;
           result.action = ActionType::kNeckExtension;
-          result.confidence = clampf(0.60f + (maxAngleDeg_ - 6.0f) / 64.0f,
+          result.confidence = clampf(0.60f + (fabsf(maxAngleDeg_) - 3.0f) / 67.0f,
                                      0.60f, 0.98f);
           result.durationMs = holdMs_;
           reset();
@@ -355,9 +356,10 @@ class ChinTuckRecognizer {
 
   RecognitionEvent update(const MotionFeatures& features, bool pressureActive) {
     RecognitionEvent result;
-    const bool postureSafe = features.tiltDeg < 15.0f &&
-                             fabsf(features.rollDeltaDeg) < 15.0f &&
-                             fabsf(features.yawRateDps) < 80.0f;
+    const bool postureSafe = features.tiltDeg < 9.0f &&
+                             fabsf(features.pitchDeltaDeg) < 9.0f &&
+                             fabsf(features.rollDeltaDeg) < 8.0f &&
+                             fabsf(features.yawRateDps) < 45.0f;
     if (pressureActive || !postureSafe) {
       reset();
       return result;
@@ -365,9 +367,7 @@ class ChinTuckRecognizer {
 
     switch (state_) {
       case State::kIdle:
-        // The cap's resting gyro is noisier than the bench unit. A clean
-        // opposite-pulse signature, not a second neutral gate, arms chin tuck.
-        armed_ = true;
+        if (features.neutralStable) armed_ = true;
         if (armed_ && fabsf(features.sagittalLinearG) >= 0.10f) {
           const float sign = features.sagittalLinearG >= 0.0f ? 1.0f : -1.0f;
           if (onsetCount_ == 0 || sign == firstSign_) {
@@ -414,7 +414,7 @@ class ChinTuckRecognizer {
           reset();
           break;
         }
-        if (fabsf(features.sagittalLinearG) < 0.04f) {
+        if (features.neutralStable) {
           if (maxOmegaDps_ <= 65.0f) {
             result.valid = true;
             result.action = ActionType::kChinTuck;
