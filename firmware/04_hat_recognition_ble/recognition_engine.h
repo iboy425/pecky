@@ -289,10 +289,17 @@ class NeckExtensionRecognizer {
         }
         if (signedAngle > maxAngleDeg_) maxAngleDeg_ = signedAngle;
         // Three 25 Hz samples make a deliberate extension responsive while
-        // still rejecting a single IMU shock.
+        // still rejecting a single IMU shock. The physical cap's neutral
+        // estimator is noisy, so confirm the completed extension here rather
+        // than requiring a second neutral-stable window before emitting it.
         if (++holdCount_ >= 3) {
           holdMs_ = holdCount_ * kSamplePeriodMs;
-          state_ = State::kReturn;
+          result.valid = true;
+          result.action = ActionType::kNeckExtension;
+          result.confidence = clampf(0.60f + (maxAngleDeg_ - 8.0f) / 57.0f,
+                                     0.60f, 0.98f);
+          result.durationMs = holdMs_;
+          reset();
         }
         break;
 
@@ -673,7 +680,10 @@ class RecognitionEngine {
     chinTuck_.reset();
     resistance_.cancelSelfTest();
     cooldownSamples_ = 0;
-    waitForNeutral_ = true;
+    // USB-connected live use must not be blocked indefinitely by a noisy
+    // neutral estimate. Each individual recognizer still validates its own
+    // motion signature before it can emit an event.
+    waitForNeutral_ = false;
     status_.candidate = ActionType::kNone;
     status_.state = 4;
     status_.pressureTestActive = false;
