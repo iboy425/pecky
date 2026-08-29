@@ -491,14 +491,14 @@ export class ChairBleDataSource implements PeckyDataSource {
     try {
       const message: unknown = JSON.parse(new TextDecoder().decode(new Uint8Array(value.buffer, value.byteOffset, value.byteLength)));
       const code = message && typeof message === "object" && !Array.isArray(message) ? (message as { c?: unknown }).c : null;
-      const action = code === 1 ? "left_stretch" : code === 2 ? "right_stretch" : code === 3 ? "chest_extension" : null;
+      const action = code === 1 || code === 2 ? "stretch" : code === 3 ? "chest_extension" : null;
       if (action) this.listeners.forEach((listener) => listener({ events: [], recognizedActions: [{ device: "chair", action, label: chairActionLabel(action) }] }));
     } catch { /* Ignore a malformed packet. */ }
   };
 }
 
 function hatActionLabel(action: PeckyAction): string { return ({ neck_extension: "后仰脖子", chin_tuck: "收下巴", head_resistance: "抱头抗阻" })[action]; }
-function chairActionLabel(action: string): string { return ({ left_stretch: "向左拉伸", right_stretch: "向右拉伸", chest_extension: "胸椎舒展" })[action] ?? "椅子动作"; }
+function chairActionLabel(action: string): string { return ({ stretch: "拉伸", chest_extension: "胸椎舒展" })[action] ?? "椅子动作"; }
 
 export function sampleImportPayload(): { version: 1; events: ExternalPeckyEvent[] } {
   return {

@@ -87,6 +87,10 @@ try:
     asyncio.run(main())
 except KeyboardInterrupt:
     pass
+except (serial.SerialException, OSError) as exc:
+    log(f"BRIDGE_ERROR {exc}")
 finally:
+    was_open = bool(device and device.is_open)
     shutdown_device()
-    log("BRIDGE_STOPPED")
+    if was_open:
+        log("BRIDGE_STOPPED")

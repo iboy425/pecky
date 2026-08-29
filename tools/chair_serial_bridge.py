@@ -20,7 +20,9 @@ PORT, BAUD, clients = "COM8", 115200, set()
 line_queue: queue.Queue[str] = queue.Queue()
 device: serial.Serial | None = None
 LOG_PATH = os.path.join(os.environ.get("TEMP", "."), "pecky-chair-serial-bridge.log")
-ACTIONS = {1: ("left_stretch", "向左拉伸"), 2: ("right_stretch", "向右拉伸"), 3: ("chest_extension", "胸椎舒展")}
+# Codes 1 and 2 remain accepted for compatibility with older flashed chair
+# firmware, but both are intentionally presented as the same user action.
+ACTIONS = {1: ("stretch", "拉伸"), 2: ("stretch", "拉伸"), 3: ("chest_extension", "胸椎舒展")}
 
 
 def log(message: str) -> None:
@@ -42,7 +44,7 @@ def reader() -> None:
         while device and device.is_open:
             raw = device.readline().decode("utf-8", "replace").strip()
             if raw:
-                if raw.startswith(("ACTION,", "STATUS,", "ERROR,")):
+                if raw.startswith(("ACTION,", "STATUS,", "ERROR,", "PROGRESS,")):
                     log(f"SERIAL {raw}")
                 line_queue.put(raw)
     except (serial.SerialException, OSError, TypeError):
@@ -123,6 +125,10 @@ try:
     asyncio.run(main())
 except KeyboardInterrupt:
     pass
+except (serial.SerialException, OSError) as exc:
+    log(f"CHAIR_BRIDGE_ERROR {exc}")
 finally:
+    was_open = bool(device and device.is_open)
     shutdown_device()
-    log("CHAIR_BRIDGE_STOPPED")
+    if was_open:
+        log("CHAIR_BRIDGE_STOPPED")
