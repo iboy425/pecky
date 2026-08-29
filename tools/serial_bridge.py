@@ -34,6 +34,10 @@ def reader() -> None:
             line_queue.put(raw)
 
 async def broadcast(line: str) -> None:
+    if line.startswith(("PROGRESS,", "INFO,", "ERROR,")):
+        message = json.dumps({"type": "status", "line": line})
+        await asyncio.gather(*(client.send(message) for client in clients), return_exceptions=True)
+        return
     if not line.startswith("EVENT,"): return
     at = line.find("{")
     if at < 0: return
@@ -52,7 +56,13 @@ async def handler(socket) -> None:
     first = not clients; clients.add(socket)
     log("APP_CONNECTED")
     if first: command("START")
-    try: await socket.wait_closed()
+    try:
+        async for raw in socket:
+            # The diagnostic pages run only on this computer. Ordinary APP
+            # clients send no messages and retain the automatic START/PAUSE
+            # behavior.
+            if raw == "PRESSURE_TEST": command("PRESSURE_TEST")
+            elif raw == "CALIBRATE": command("CALIBRATE")
     finally:
         clients.discard(socket)
         if not clients: command("PAUSE")
