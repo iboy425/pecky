@@ -774,7 +774,10 @@ class RecognitionEngine {
       extension_.reset();
       chinTuck_.reset();
       resistance_.reset();
-      waitForNeutral_ = true;
+      // Keep the short debounce cooldown, but do not re-enter the noisy
+      // neutral gate after a confirmed USB gesture. This allows consecutive
+      // repetitions to be counted in a live session.
+      waitForNeutral_ = false;
     }
     updateStatus(frame.timeMs, features);
     return accepted;
