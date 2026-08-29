@@ -42,6 +42,7 @@ import {
 } from "../lib/storage";
 import {
   BlePeckyDataSource,
+  ChairBleDataSource,
   SerialPeckyDataSource,
   JsonImportDataSource,
   MockPeckyDataSource,
@@ -119,6 +120,7 @@ export function PeckyApp() {
   const [modal, setModal] = useState<ModalState>(null);
   const [confirmation, setConfirmation] = useState<ConfirmationState>(null);
   const [toast, setToast] = useState<{ message: string; tone: "info" | "success" | "error" } | null>(null);
+  const [actionCaption, setActionCaption] = useState<{ key: number; label: string } | null>(null);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const finishingOpening = useRef(false);
   const bootPromise = useRef<Promise<BootResult> | null>(null);
@@ -128,12 +130,17 @@ export function PeckyApp() {
   const transitionEndTimer = useRef<number | null>(null);
   const bleSource = useRef<BlePeckyDataSource | null>(null);
   const serialSource = useRef<SerialPeckyDataSource | null>(null);
+  const chairSource = useRef<ChairBleDataSource | null>(null);
+  const chairUnsubscribe = useRef<(() => void) | null>(null);
   const bleUnsubscribe = useRef<(() => void) | null>(null);
   const [bleConnection, setBleConnection] = useState<"disconnected" | "connecting" | "connected" | "unavailable">(
     typeof navigator !== "undefined" && "bluetooth" in navigator ? "disconnected" : "unavailable",
   );
   const [serialConnection, setSerialConnection] = useState<"disconnected" | "connecting" | "connected" | "unavailable">(
     typeof navigator !== "undefined" && "serial" in navigator ? "disconnected" : "unavailable",
+  );
+  const [chairConnection, setChairConnection] = useState<"disconnected" | "connecting" | "connected" | "unavailable">(
+    typeof navigator !== "undefined" && "bluetooth" in navigator ? "disconnected" : "unavailable",
   );
 
   const showToast = useCallback(
@@ -148,6 +155,12 @@ export function PeckyApp() {
     const timeout = window.setTimeout(() => setToast(null), 3_600);
     return () => window.clearTimeout(timeout);
   }, [toast]);
+
+  useEffect(() => {
+    if (!actionCaption) return;
+    const timeout = window.setTimeout(() => setActionCaption(null), 2_000);
+    return () => window.clearTimeout(timeout);
+  }, [actionCaption]);
 
   useEffect(() => {
     let active = true;
@@ -411,6 +424,8 @@ export function PeckyApp() {
       };
 
       const applyBatch = async (batch: PeckyEventBatch) => {
+        batch.recognizedActions?.forEach((item) => setActionCaption({ key: Date.now() + Math.random(), label: item.label }));
+        if (batch.events.length === 0) return null;
         let result: ReturnType<typeof ingestExternalEvents> | null = null;
         const next = await commit((current) => {
           result = ingestExternalEvents(current, batch.events, source.id);
@@ -510,10 +525,24 @@ export function PeckyApp() {
     } else setSerialConnection(source.getConnectionState());
   }, [ingestFromSource, showToast]);
 
+  const handleChairToggle = useCallback(async () => {
+    if (chairSource.current) {
+      const source = chairSource.current;
+      chairUnsubscribe.current?.(); chairUnsubscribe.current = null; chairSource.current = null;
+      await source.disconnect(); setChairConnection("disconnected"); showToast("椅子已断开", "info"); return;
+    }
+    setChairConnection("connecting");
+    const source = new ChairBleDataSource(); await source.connect(); chairSource.current = source;
+    chairUnsubscribe.current = source.subscribe((batch) => batch.recognizedActions?.forEach((item) => setActionCaption({ key: Date.now() + Math.random(), label: item.label })));
+    setChairConnection("connected"); showToast("椅子已连接，动作完成后会立即提示", "success");
+  }, [showToast]);
+
   useEffect(() => () => {
     bleUnsubscribe.current?.();
     void bleSource.current?.disconnect();
     void serialSource.current?.disconnect();
+    chairUnsubscribe.current?.();
+    void chairSource.current?.disconnect();
   }, []);
 
   const handleJsonFile = useCallback(
@@ -751,6 +780,8 @@ export function PeckyApp() {
           serialConnection={serialConnection}
           toggleSerial={handleSerialToggle}
           onBleToggle={handleBleToggle}
+          chairConnection={chairConnection}
+          onChairToggle={handleChairToggle}
           onInstall={handleInstall}
           installAvailable={Boolean(installPrompt)}
           onLoadDemo={() => setConfirmation({ kind: "demo" })}
@@ -771,6 +802,7 @@ export function PeckyApp() {
           {toast.message}
         </div>
       )}
+      {actionCaption && <div className="action-caption" key={actionCaption.key} role="status" aria-live="polite"><span>已识别</span><strong>{actionCaption.label}</strong></div>}
     </main>
   );
 }
@@ -1373,6 +1405,8 @@ function SettingsSheet({
   serialConnection,
   toggleSerial,
   onBleToggle,
+  chairConnection,
+  onChairToggle,
   onInstall,
   installAvailable,
   onLoadDemo,
@@ -1388,6 +1422,8 @@ function SettingsSheet({
   serialConnection: "disconnected" | "connecting" | "connected" | "unavailable";
   toggleSerial: () => void;
   onBleToggle: () => Promise<void>;
+  chairConnection: "disconnected" | "connecting" | "connected" | "unavailable";
+  onChairToggle: () => Promise<void>;
   onInstall: () => Promise<void>;
   installAvailable: boolean;
   onLoadDemo: () => void;
@@ -1482,6 +1518,13 @@ function SettingsSheet({
           <div><h3>USB 直连（当前可用）</h3><p>用 COM7 对应的 USB 线直接实时接收帽子识别结果</p></div>
           <button type="button" disabled={busy || serialConnection === "unavailable"} onClick={toggleSerial}>
             {serialConnection === "connected" ? "断开" : serialConnection === "connecting" ? "连接中" : serialConnection === "unavailable" ? "浏览器不支持" : "连接 USB"}
+          </button>
+        </section>
+        <section className="ble-card">
+          <div className="ble-icon"><PeckyIcon name="bluetooth" /></div>
+          <div><h3>清闲椅子</h3><p>{chairConnection === "connected" ? "实时接收拉伸和舒展动作" : "连接后，椅子本地识别并立即提示"}</p></div>
+          <button type="button" disabled={busy || chairConnection === "unavailable"} onClick={async () => { setBusy(true); await onChairToggle(); setBusy(false); }}>
+            {chairConnection === "connected" ? "断开" : chairConnection === "connecting" ? "连接中" : chairConnection === "unavailable" ? "浏览器不支持" : "连接"}
           </button>
         </section>
 

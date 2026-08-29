@@ -15,7 +15,7 @@ Pecky is a mobile-first savings companion for the Pecky hardware concept. It tur
 
 ## Hardware-ready event contract
 
-The simulator, JSON importer, and live BLE adapter implement the same data-source interface in `app/lib/sources.ts`. BLE completion events also preserve the recognized action (`neck_extension`, `chin_tuck`, or `head_resistance`).
+The simulator, JSON importer, and live BLE adapter implement the same data-source interface in `app/lib/sources.ts`. BLE completion events preserve the recognized cap action (`neck_extension`, `chin_tuck`, or `head_resistance`). The app also connects to the chair independently: chair actions never alter the rice balance and instead display a UI-styled “已识别” caption for two seconds, then fade out.
 
 ```json
 {
@@ -69,6 +69,24 @@ The cap firmware uses `NimBLE-Arduino` 2.5.x. Install it once before compiling `
 ```powershell
 arduino-cli lib install "NimBLE-Arduino@2.5.1"
 ```
+
+## Real hardware startup
+
+Flash the existing cap recognizer to the cap ESP32-S3, and flash the chair recognizer to the chair ESP32-S3. Keep still during each device's initial calibration. Both advertise their own BLE service, so they can be connected independently from **我的 → 设置与数据** in Android Chrome (or an installed Android PWA).
+
+```bash
+# In WSL / Ubuntu, from the repository root
+arduino-cli compile --fqbn esp32:esp32:esp32s3 firmware/04_hat_recognition_ble
+arduino-cli upload -p /dev/ttyUSB0 --fqbn esp32:esp32:esp32s3 firmware/04_hat_recognition_ble
+
+arduino-cli compile --fqbn esp32:esp32:esp32s3 Chair/firmware/01_chair_recognition_ble
+arduino-cli upload -p /dev/ttyUSB1 --fqbn esp32:esp32:esp32s3 Chair/firmware/01_chair_recognition_ble
+
+# Start the web app (use the HTTPS URL shown by the dev server on a phone)
+npm run dev -- --host 0.0.0.0
+```
+
+Use the actual serial device paths shown by `arduino-cli board list`; do not assume `/dev/ttyUSB0` and `/dev/ttyUSB1` on every computer. Web Bluetooth requires a secure context (HTTPS, except localhost) and a browser that supports it.
 
 `npm test` builds the vinext/Cloudflare output and verifies the rendered PWA shell, production metadata, opening state machine, persistence contract, adapters, and required web assets.
 

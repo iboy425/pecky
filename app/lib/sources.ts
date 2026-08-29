@@ -9,6 +9,13 @@ export type DataSourceConnectionState =
 export interface PeckyEventBatch {
   events: unknown[];
   cursor?: string;
+  recognizedActions?: RecognizedAction[];
+}
+
+export interface RecognizedAction {
+  device: "hat" | "chair";
+  action: string;
+  label: string;
 }
 
 export interface PeckyDataSource {
@@ -211,6 +218,7 @@ export class BlePeckyDataSource implements PeckyDataSource {
       const batch = {
         events: [this.toExternalEvent(sequence, 1, action)],
         cursor: this.encodeCursor(sequence, this.lastTotalReps),
+        recognizedActions: [{ device: "hat" as const, action, label: hatActionLabel(action) }],
       };
       this.listeners.forEach((listener) => listener(batch));
     } catch {
@@ -352,6 +360,58 @@ export class SerialPeckyDataSource implements PeckyDataSource {
     } catch { /* malformed serial diagnostics are ignored */ }
   }
 }
+
+export class ChairBleDataSource implements PeckyDataSource {
+  readonly id = "chair" as const;
+  private connectionState: DataSourceConnectionState = "disconnected";
+  private device: BluetoothDevice | null = null;
+  private server: BluetoothRemoteGATTServer | null = null;
+  private eventCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
+  private listeners = new Set<(batch: PeckyEventBatch) => void>();
+  static readonly SERVICE_UUID = "2f6f2000-8d0a-4e3d-bbc6-9f536a6ed001";
+  static readonly EVENT_UUID = "2f6f2001-8d0a-4e3d-bbc6-9f536a6ed001";
+  getConnectionState(): DataSourceConnectionState { return typeof navigator === "undefined" || !("bluetooth" in navigator) ? "unavailable" : this.connectionState; }
+  async connect(): Promise<void> {
+    const bluetooth = (navigator as Navigator & { bluetooth?: Bluetooth }).bluetooth;
+    if (!bluetooth) throw new Error("当前浏览器不支持 Web Bluetooth，请用 Android Chrome 打开");
+    this.connectionState = "connecting";
+    try {
+      this.device = await bluetooth.requestDevice({ filters: [{ services: [ChairBleDataSource.SERVICE_UUID] }] });
+      if (!this.device.gatt) throw new Error("椅子没有可用的 BLE GATT 服务");
+      this.device.addEventListener("gattserverdisconnected", this.handleDisconnect);
+      this.server = await this.device.gatt.connect();
+      const service = await this.server.getPrimaryService(ChairBleDataSource.SERVICE_UUID);
+      this.eventCharacteristic = await service.getCharacteristic(ChairBleDataSource.EVENT_UUID);
+      await this.eventCharacteristic.startNotifications();
+      this.eventCharacteristic.addEventListener("characteristicvaluechanged", this.handleEvent);
+      this.connectionState = "connected";
+    } catch (error) { this.connectionState = "disconnected"; throw error; }
+  }
+  async disconnect(): Promise<void> {
+    if (this.eventCharacteristic) {
+      this.eventCharacteristic.removeEventListener("characteristicvaluechanged", this.handleEvent);
+      if (this.eventCharacteristic.service.device.gatt?.connected) await this.eventCharacteristic.stopNotifications().catch(() => undefined);
+    }
+    this.device?.removeEventListener("gattserverdisconnected", this.handleDisconnect);
+    this.server?.disconnect(); this.eventCharacteristic = null; this.server = null; this.device = null; this.connectionState = "disconnected";
+  }
+  async pull(): Promise<PeckyEventBatch> { return { events: [] }; }
+  subscribe(listener: (batch: PeckyEventBatch) => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  private readonly handleDisconnect = () => { this.connectionState = "disconnected"; };
+  private readonly handleEvent = (event: Event) => {
+    const value = (event.target as BluetoothRemoteGATTCharacteristic).value;
+    if (!value) return;
+    try {
+      const message: unknown = JSON.parse(new TextDecoder().decode(new Uint8Array(value.buffer, value.byteOffset, value.byteLength)));
+      const code = message && typeof message === "object" && !Array.isArray(message) ? (message as { c?: unknown }).c : null;
+      const action = code === 1 ? "left_stretch" : code === 2 ? "right_stretch" : code === 3 ? "chest_extension" : null;
+      if (action) this.listeners.forEach((listener) => listener({ events: [], recognizedActions: [{ device: "chair", action, label: chairActionLabel(action) }] }));
+    } catch { /* Ignore a malformed packet. */ }
+  };
+}
+
+function hatActionLabel(action: PeckyAction): string { return ({ neck_extension: "后仰脖子", chin_tuck: "收下巴", head_resistance: "抱头抗阻" })[action]; }
+function chairActionLabel(action: string): string { return ({ left_stretch: "向左拉伸", right_stretch: "向右拉伸", chest_extension: "胸椎舒展" })[action] ?? "椅子动作"; }
 
 export function sampleImportPayload(): { version: 1; events: ExternalPeckyEvent[] } {
   return {
