@@ -273,8 +273,19 @@ void publishSnapshot(bool notify) {
 }
 
 void publishProgress() {
-  if (!isBleConnected()) return;
   const auto& status = recognitionEngine.status();
+  // The terminal bridge is the production path for this prototype. Emit the
+  // recognizer state over USB when radio advertising is intentionally off.
+  if (!kEnableBleRadio) {
+    Serial.printf("PROGRESS,candidate=%u,hold=%lu,state=%u,neutral=%u,pressure=%u\n",
+                  static_cast<unsigned>(status.candidate),
+                  static_cast<unsigned long>(status.candidateDurationMs),
+                  static_cast<unsigned>(status.state),
+                  status.neutralStable ? 1U : 0U,
+                  status.pressureHealthy ? 1U : 0U);
+    return;
+  }
+  if (!isBleConnected()) return;
   char payload[180];
   snprintf(payload, sizeof(payload),
            "{\"v\":1,\"t\":\"p\",\"s\":%lu,\"q\":%lu,\"r\":%u,\"g\":%u,"
