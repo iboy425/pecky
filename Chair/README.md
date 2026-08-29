@@ -29,6 +29,9 @@ Chair/
   tools/
     check_com8.py
     capture_actions_com8.py
+    capture_left_com8.sh
+    capture_right_com8.sh
+    capture_chest_com8.sh
     run_capture_com8.sh
   data/
     .gitignore
@@ -114,3 +117,24 @@ Chair/tools/run_capture_com8.sh --guided --participant P01 --session S01 \
 终端会逐项显示动作，等待操作者按 Enter，倒数后自动采集 3 秒。
 正式采集时增加 `--repetitions`；CSV 写入 `Chair/data/`，并由该目录的
 `.gitignore` 排除，不得提交参与者数据。
+
+### 三个动作分别采集
+
+为了让每个 CSV 只含一种动作标签，正式采集优先使用下面三个独立入口。
+它们都只访问 `COM8`，每次动作固定采集 3 秒：
+
+```bash
+# 只采集向左拉伸
+Chair/tools/capture_left_com8.sh --participant P01 --session LEFT01 --repetitions 10
+
+# 只采集向右拉伸
+Chair/tools/capture_right_com8.sh --participant P01 --session RIGHT01 --repetitions 10
+
+# 只采集胸椎舒展
+Chair/tools/capture_chest_com8.sh --participant P01 --session CHEST01 --repetitions 10
+```
+
+每次准备好后按 Enter，程序倒数 3 秒，然后采集该动作 3 秒；完成后先恢复
+正常坐姿，再准备下一次。生成的文件名分别包含 `left_stretch`、
+`right_stretch` 或 `chest_extension`，CSV 中的 `collection_mode` 为
+`single_action`。输入 `q` 或按 `Ctrl-C` 会保留此前已经完成的窗口。
