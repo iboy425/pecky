@@ -39,7 +39,7 @@ const sources = {
     projectRoot,
     "assets-source",
     "achievements",
-    "qingxian-chair.png",
+    "qingxian-chair-card.png",
   ),
   rewards: path.join(sourceRoot, "animation 新素材", "奖励图标合集"),
   approvedStocks: path.join(
@@ -248,13 +248,13 @@ async function prepareAchievementIcons() {
   );
 
   await sharp(sources.qingxianChair)
-    .trim({ background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .extract({ left: 220, top: 55, width: 800, height: 835 })
     .resize(192, 192, {
       fit: "contain",
-      background: { r: 0, g: 0, b: 0, alpha: 0 },
+      background: "#FFFFFF",
     })
-    .webp({ quality: 92, alphaQuality: 100, effort: 5 })
-    .toFile(path.join(outputRoot, "achievements", "wish-achieved.webp"));
+    .webp({ quality: 92, effort: 5 })
+    .toFile(path.join(outputRoot, "achievements", "qingxian-chair.webp"));
 }
 
 async function prepareVideo() {
