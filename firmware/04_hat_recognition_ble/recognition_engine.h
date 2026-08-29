@@ -301,11 +301,12 @@ class NeckExtensionRecognizer {
         if (++holdCount_ >= 3) {
           holdMs_ = holdCount_ * kSamplePeriodMs;
           state_ = State::kReturn;
+          returnStartMs_ = features.timeMs;
         }
         break;
 
       case State::kReturn:
-        if (features.timeMs - startMs_ > 7000) {
+        if (features.timeMs - returnStartMs_ > 3000) {
           reset();
           break;
         }
@@ -313,7 +314,10 @@ class NeckExtensionRecognizer {
         // neutral flag, which is unreliable on the assembled cap.
         // The gravity filter can retain a small pitch residual after the cap
         // returns, so a stable neutral window is also a valid completion.
-        if (fabsf(signedAngle) < 3.0f || features.neutralStable) {
+        // Complete after the user returns, or after a short post-hold window
+        // when this physical IMU retains a pitch offset despite being still.
+        if (fabsf(signedAngle) < 3.0f || features.neutralStable ||
+            features.timeMs - returnStartMs_ >= 600) {
           result.valid = true;
           result.action = ActionType::kNeckExtension;
           result.confidence = clampf(0.60f + (fabsf(maxAngleDeg_) - 3.0f) / 67.0f,
@@ -339,6 +343,7 @@ class NeckExtensionRecognizer {
   uint8_t onsetCount_ = 0;
   uint8_t holdCount_ = 0;
   uint32_t startMs_ = 0;
+  uint32_t returnStartMs_ = 0;
   uint32_t holdMs_ = 0;
   float maxAngleDeg_ = 0.0f;
 };
@@ -372,16 +377,16 @@ class ChinTuckRecognizer {
     switch (state_) {
       case State::kIdle:
         if (features.neutralStable) armed_ = true;
-        if (armed_ && fabsf(features.sagittalLinearG) >= 0.07f) {
+        if (armed_ && fabsf(features.sagittalLinearG) >= 0.035f) {
           const float sign = features.sagittalLinearG >= 0.0f ? 1.0f : -1.0f;
           if (onsetCount_ == 0 || sign == firstSign_) {
             firstSign_ = sign;
             if (fabsf(features.sagittalLinearG) > firstPeakAbs_) {
               firstPeakAbs_ = fabsf(features.sagittalLinearG);
             }
-            // Two consecutive samples rejects isolated walking/hat shocks
-            // while retaining the short natural chin-tuck pulse.
-            if (++onsetCount_ >= 2) {
+            // A chin tuck is a short translational pulse; the return pulse
+            // below remains required, so one clear onset is sufficient.
+            if (++onsetCount_ >= 1) {
               state_ = State::kFirstPulse;
               startMs_ = features.timeMs;
               maxOmegaDps_ = features.omegaDps;
@@ -403,11 +408,11 @@ class ChinTuckRecognizer {
           break;
         }
         const bool oppositePulse =
-            firstSign_ * features.sagittalLinearG <= -0.06f;
+            firstSign_ * features.sagittalLinearG <= -0.025f;
         if (elapsed >= 240 && oppositePulse) {
           secondPeakAbs_ = fabsf(features.sagittalLinearG);
           const float ratio = secondPeakAbs_ / fmaxf(firstPeakAbs_, 0.001f);
-          if (ratio >= 0.40f && ratio <= 2.50f) {
+          if (ratio >= 0.20f && ratio <= 5.00f) {
             state_ = State::kReturnPulse;
           }
         }
@@ -419,7 +424,7 @@ class ChinTuckRecognizer {
           reset();
           break;
         }
-        if (features.neutralStable) {
+        if (features.neutralStable || fabsf(features.sagittalLinearG) < 0.05f) {
           if (maxOmegaDps_ <= 65.0f) {
             result.valid = true;
             result.action = ActionType::kChinTuck;
@@ -753,14 +758,12 @@ class RecognitionEngine {
     RecognitionEvent accepted;
     if (resistanceEvent.valid) {
       accepted = resistanceEvent;
-    } else if (extensionEvent.valid && !chinEvent.valid) {
-      accepted = extensionEvent;
-    } else if (chinEvent.valid && !extensionEvent.valid) {
+    } else if (chinEvent.valid) {
+      // A confirmed outward-and-return pulse is more specific than the broad
+      // pitch excursion used for extension, so let chin tuck win ties.
       accepted = chinEvent;
-    } else if (extensionEvent.valid && chinEvent.valid) {
-      // Ambiguous movement: reject rather than guess and create a false count.
-      extension_.reset();
-      chinTuck_.reset();
+    } else if (extensionEvent.valid) {
+      accepted = extensionEvent;
     }
 
     if (accepted.valid) {
