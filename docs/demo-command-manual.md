@@ -6,10 +6,10 @@
 
 1. 帽子与椅子均通过 USB 连接电脑；帽子戴好后保持头部中立，椅子周围传感器前方没有遮挡物。
 2. 打开 APP：<http://localhost:3001/>。在“我的 → 设置与数据”中分别连接 `Pecky-xxxx` 与 `Qingxian-Chair`，保持浏览器页面在前台。
-3. 打开 PowerShell，进入项目目录：
+3. **另开一个 Windows PowerShell 窗口**（不要在 `iboy@...:/home/...$` 的 WSL 提示符中执行），进入项目目录：
 
 ```powershell
-cd \\wsl.localhost\Ubuntu-22.04\home\shenicest
+cd "\\wsl.localhost\Ubuntu-22.04\home\shenicest"
 py -3 tools\control_devices.py all status
 ```
 
@@ -63,7 +63,7 @@ py -3 tools\control_devices.py chair pause
 
 ## 4. APP 启动命令
 
-若 APP 没有运行，在 WSL 终端执行：
+若 APP 没有运行，在 **WSL 终端**（提示符形如 `iboy@DESKTOP...:/home/shenicest$`）执行：
 
 ```bash
 cd /home/shenicest
@@ -71,6 +71,8 @@ npm run dev -- --host 0.0.0.0
 ```
 
 浏览器打开终端显示的本地地址。开发机默认通常是 <http://localhost:3000/>；若端口已被占用，使用终端实际输出的地址，例如 <http://localhost:3001/>。
+
+> 设备控制命令和 APP 启动命令需要在不同终端执行：WSL 默认不能直接访问 Windows 的 `COM7`、`COM8`；因此 `py -3 tools\control_devices.py ...` 必须在 Windows PowerShell 中执行。
 
 ## 5. 常见问题与恢复
 

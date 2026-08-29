@@ -93,7 +93,7 @@ Use the actual serial device paths shown by `arduino-cli board list`; do not ass
 Both devices boot calibrated but **paused**. Use the controller to decide exactly when a test starts, pauses, or recalibrates. Paused devices do not create BLE action notifications, so the app will not show captions or add cap events.
 
 ```powershell
-# Windows terminal (the connected cap is COM7 and chair is COM8)
+# Windows PowerShell (not the WSL `iboy@...$` shell; cap is COM7, chair is COM8)
 py -3 tools\control_devices.py all status
 py -3 tools\control_devices.py all start
 py -3 tools\control_devices.py hat pause
