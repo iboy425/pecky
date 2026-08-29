@@ -41,16 +41,12 @@ def reader() -> None:
     while device and device.is_open:
         raw = device.readline().decode("utf-8", "replace").strip()
         if raw:
-            if raw.startswith(("ACTION,", "STATUS,", "CONTROL,", "PROGRESS,", "ERROR,")):
+            if raw.startswith(("ACTION,", "STATUS,", "ERROR,")):
                 log(f"SERIAL {raw}")
             line_queue.put(raw)
 
 
 async def broadcast(line: str) -> None:
-    if line.startswith(("STATUS,", "CONTROL,", "PROGRESS,", "ERROR,")):
-        message = json.dumps({"type": "status", "line": line})
-        await asyncio.gather(*(client.send(message) for client in clients), return_exceptions=True)
-        return
     if not line.startswith("ACTION,"):
         return
     try:
