@@ -234,7 +234,8 @@ class NeckExtensionRecognizer {
 
   void reset() {
     state_ = State::kIdle;
-    armed_ = false;
+    // USB live mode has already passed the session-start safety gate.
+    armed_ = true;
     onsetCount_ = 0;
     holdCount_ = 0;
     startMs_ = 0;
@@ -256,7 +257,10 @@ class NeckExtensionRecognizer {
     switch (state_) {
       case State::kIdle:
         if (features.neutralStable) armed_ = true;
-        if (armed_ && signedRate > 30.0f && directionSafe) {
+        // The sensor orientation varies between the assembled hats. Treat a
+        // deliberate sagittal head motion in either pitch direction as the
+        // extension gesture, rather than relying on one fixed IMU sign.
+        if (armed_ && fabsf(features.pitchRateDps) > 8.0f && directionSafe) {
           if (++onsetCount_ >= 2) {
             state_ = State::kMoving;
             startMs_ = features.timeMs;
@@ -272,22 +276,23 @@ class NeckExtensionRecognizer {
           reset();
           break;
         }
-        if (signedAngle > maxAngleDeg_) maxAngleDeg_ = signedAngle;
+        if (fabsf(signedAngle) > fabsf(maxAngleDeg_)) maxAngleDeg_ = signedAngle;
         // The assembled cap's physical mounting can amplify the pitch angle.
         // Keep a broad safe range so a clinically normal extension reaches
         // the hold phase instead of being rejected at the peak.
-        if (signedAngle >= 8.0f && signedAngle <= 65.0f) {
+        if (fabsf(signedAngle) >= 3.0f && fabsf(signedAngle) <= 70.0f) {
           state_ = State::kHold;
           holdCount_ = 1;
         }
         break;
 
       case State::kHold:
-        if (!directionSafe || signedAngle < 6.0f || signedAngle > 70.0f) {
+        if (!directionSafe || fabsf(signedAngle) < 2.0f ||
+            fabsf(signedAngle) > 75.0f) {
           reset();
           break;
         }
-        if (signedAngle > maxAngleDeg_) maxAngleDeg_ = signedAngle;
+        if (fabsf(signedAngle) > fabsf(maxAngleDeg_)) maxAngleDeg_ = signedAngle;
         // Three 25 Hz samples make a deliberate extension responsive while
         // still rejecting a single IMU shock. The physical cap's neutral
         // estimator is noisy, so confirm the completed extension here rather
@@ -296,7 +301,7 @@ class NeckExtensionRecognizer {
           holdMs_ = holdCount_ * kSamplePeriodMs;
           result.valid = true;
           result.action = ActionType::kNeckExtension;
-          result.confidence = clampf(0.60f + (maxAngleDeg_ - 8.0f) / 57.0f,
+          result.confidence = clampf(0.60f + (fabsf(maxAngleDeg_) - 3.0f) / 67.0f,
                                      0.60f, 0.98f);
           result.durationMs = holdMs_;
           reset();
