@@ -9,6 +9,7 @@ import {
   useState,
   type ChangeEvent,
   type FormEvent,
+  type RefObject,
   type ReactNode,
 } from "react";
 import {
@@ -118,6 +119,10 @@ export function PeckyApp() {
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const finishingOpening = useRef(false);
   const bootPromise = useRef<Promise<BootResult> | null>(null);
+  const openingHeroRef = useRef<HTMLDivElement>(null);
+  const homeHeroRef = useRef<HTMLDivElement>(null);
+  const rewardPauseTimer = useRef<number | null>(null);
+  const transitionEndTimer = useRef<number | null>(null);
 
   const showToast = useCallback(
     (message: string, tone: "info" | "success" | "error" = "info") => {
@@ -217,34 +222,83 @@ export function PeckyApp() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [confirmation, modal]);
 
-  const finishOpening = useCallback(async () => {
+  const finishOpening = useCallback(() => {
     if (!openingBatch || finishingOpening.current) return;
     finishingOpening.current = true;
-    setOpeningPhase("collapsing");
 
-    try {
-      const next = await updatePeckyState(
-        (current) => completeOpeningEvents(current, openingBatch.eventIds),
-        { seedDemo },
-      );
-      setState(next);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : "开屏记录保存失败", "error");
+    if (rewardPauseTimer.current !== null) {
+      window.clearTimeout(rewardPauseTimer.current);
+      rewardPauseTimer.current = null;
     }
 
+    const sourceHero = openingHeroRef.current;
+    const targetHero = homeHeroRef.current;
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    window.setTimeout(() => {
+
+    if (!reducedMotion && sourceHero && targetHero) {
+      const sourceRect = sourceHero.getBoundingClientRect();
+      const targetRect = targetHero.getBoundingClientRect();
+      const scale = Math.max(
+        targetRect.width / sourceRect.width,
+        targetRect.height / sourceRect.height,
+      );
+      const visibleWidth = targetRect.width / scale;
+      const visibleHeight = targetRect.height / scale;
+      const clipX = Math.max((sourceRect.width - visibleWidth) / 2, 0);
+      const clipY = Math.max((sourceRect.height - visibleHeight) / 2, 0);
+      const shiftX = targetRect.left - sourceRect.left - clipX * scale;
+      const shiftY = targetRect.top - sourceRect.top - clipY * scale;
+      const targetRadius = Number.parseFloat(getComputedStyle(targetHero).borderRadius) || 22;
+
+      sourceHero.style.setProperty("--hero-shift-x", `${shiftX}px`);
+      sourceHero.style.setProperty("--hero-shift-y", `${shiftY}px`);
+      sourceHero.style.setProperty("--hero-scale", String(scale));
+      sourceHero.style.setProperty(
+        "--hero-final-clip",
+        `inset(${clipY}px ${clipX}px ${clipY}px ${clipX}px round ${targetRadius / scale}px)`,
+      );
+    }
+
+    setOpeningPhase("collapsing");
+
+    void updatePeckyState(
+        (current) => completeOpeningEvents(current, openingBatch.eventIds),
+        { seedDemo },
+      )
+      .then(setState)
+      .catch((error: unknown) => {
+        showToast(error instanceof Error ? error.message : "开屏记录保存失败", "error");
+      });
+
+    transitionEndTimer.current = window.setTimeout(() => {
       setOpeningPhase("ready");
       setOpeningBatch(null);
-    }, reducedMotion ? 90 : 860);
+      transitionEndTimer.current = null;
+    }, reducedMotion ? 90 : 940);
   }, [openingBatch, seedDemo, showToast]);
+
+  const finishOpeningAfterReward = useCallback(() => {
+    if (finishingOpening.current || rewardPauseTimer.current !== null) return;
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    rewardPauseTimer.current = window.setTimeout(() => {
+      rewardPauseTimer.current = null;
+      finishOpening();
+    }, reducedMotion ? 20 : 100);
+  }, [finishOpening]);
 
   useEffect(() => {
     if (openingPhase !== "opening") return;
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const timeout = window.setTimeout(finishOpening, reducedMotion ? 80 : 6_800);
+    const timeout = window.setTimeout(finishOpening, reducedMotion ? 80 : 7_200);
     return () => window.clearTimeout(timeout);
   }, [finishOpening, openingPhase]);
+
+  useEffect(() => {
+    return () => {
+      if (rewardPauseTimer.current !== null) window.clearTimeout(rewardPauseTimer.current);
+      if (transitionEndTimer.current !== null) window.clearTimeout(transitionEndTimer.current);
+    };
+  }, []);
 
   const commit = useCallback(
     async (mutate: (current: PeckyState) => PeckyState): Promise<PeckyState | null> => {
@@ -520,6 +574,7 @@ export function PeckyApp() {
           <JarPage
             state={state}
             artActive={openingPhase === "ready"}
+            heroRef={homeHeroRef}
             onAdd={() => setModal({ kind: "goal" })}
             onEdit={(goal) => setModal({ kind: "goal", goal })}
             onPurchase={(goal) => setConfirmation({ kind: "purchase", goal })}
@@ -550,7 +605,9 @@ export function PeckyApp() {
           phase={openingPhase}
           balanceMinor={state.currentBalanceMinor}
           soundEnabled={state.settings.soundEnabled}
+          heroRef={openingHeroRef}
           onFinish={finishOpening}
+          onRewardComplete={finishOpeningAfterReward}
         />
       )}
 
@@ -636,13 +693,17 @@ function OpeningExperience({
   phase,
   balanceMinor,
   soundEnabled,
+  heroRef,
   onFinish,
+  onRewardComplete,
 }: {
   batch: OpeningBatch;
   phase: OpeningPhase;
   balanceMinor: number;
   soundEnabled: boolean;
+  heroRef: RefObject<HTMLDivElement | null>;
   onFinish: () => void;
+  onRewardComplete: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [muted, setMuted] = useState(!soundEnabled);
@@ -677,17 +738,20 @@ function OpeningExperience({
         <p>今天又攒下了 {batch.pecks} 粒米</p>
       </div>
 
-      <div className={`opening-media ${videoFailed ? "opening-media-fallback" : ""}`}>
-        <div className="opening-pill">+{batch.pecks} 粒米 · {formatMoney(batch.amountMinor)}</div>
+      <div className="opening-pill">+{batch.pecks} 粒米 · {formatMoney(batch.amountMinor)}</div>
+
+      <div ref={heroRef} className={`opening-media ${videoFailed ? "opening-media-fallback" : ""}`}>
         {!videoFailed && (
           <video
             key={batch.eventIds.join(":")}
             ref={videoRef}
-            src="/assets/media/pecky-opening.mp4?v=3"
+            src="/assets/media/pecky-opening.mp4?v=5"
             autoPlay
             playsInline
             muted={muted}
             preload="auto"
+            poster="/assets/media/pecky-opening-poster.jpg?v=5"
+            onEnded={onRewardComplete}
             onCanPlay={(event) => {
               event.currentTarget.play().catch(() => {
                 event.currentTarget.muted = true;
@@ -695,7 +759,10 @@ function OpeningExperience({
                 event.currentTarget.play().catch(() => setVideoFailed(true));
               });
             }}
-            onError={() => setVideoFailed(true)}
+            onError={() => {
+              setVideoFailed(true);
+              window.setTimeout(onRewardComplete, 700);
+            }}
           />
         )}
         {videoFailed && <img src="/assets/jar-scene.webp" alt="小鸡把米装进米罐" />}
@@ -733,6 +800,7 @@ function OpeningExperience({
 function JarPage({
   state,
   artActive,
+  heroRef,
   onAdd,
   onEdit,
   onPurchase,
@@ -740,6 +808,7 @@ function JarPage({
 }: {
   state: PeckyState;
   artActive: boolean;
+  heroRef: RefObject<HTMLDivElement | null>;
   onAdd: () => void;
   onEdit: (goal: WishGoal) => void;
   onPurchase: (goal: WishGoal) => void;
@@ -762,32 +831,33 @@ function JarPage({
           <strong>{formatMoney(state.currentBalanceMinor)}</strong>
           <p>每一粒，都算数</p>
         </div>
-        <JarBalanceArt active={artActive} />
+        <JarBalanceArt heroRef={heroRef} active={artActive} />
       </section>
 
-      <div className="section-heading">
-        <div>
-          <h2>想要的小奖励</h2>
-          <p>{goals.length > 0 ? `${goals.length} 个愿望，共用这一罐米` : "同一份余额，一起靠近每个愿望"}</p>
+      <div className="jar-home-lower">
+        <div className="section-heading">
+          <div>
+            <h2>想要的小奖励</h2>
+            <p>{goals.length > 0 ? `${goals.length} 个愿望，共用这一罐米` : "同一份余额，一起靠近每个愿望"}</p>
+          </div>
+          <div className="section-heading-actions">
+            {goals.length > 0 && <button className="link-button all-goals" type="button" onClick={onShowAll}>全部</button>}
+            <button className="icon-button add-goal" type="button" onClick={onAdd} aria-label="添加愿望">
+              <PeckyIcon name="plus" />
+            </button>
+          </div>
         </div>
-        <div className="section-heading-actions">
-          {goals.length > 0 && <button className="link-button all-goals" type="button" onClick={onShowAll}>全部</button>}
-          <button className="icon-button add-goal" type="button" onClick={onAdd} aria-label="添加愿望">
-            <PeckyIcon name="plus" />
-          </button>
-        </div>
-      </div>
 
-      {goals.length === 0 ? (
-        <div className="empty-card">
-          <img src="/assets/rewards/gold.webp" alt="" />
-          <h3>先放进一个小愿望吧</h3>
-          <p>奶茶、玩偶、门票，想攒什么都可以。</p>
-          <button className="primary-button" type="button" onClick={onAdd}>添加第一个愿望</button>
-        </div>
-      ) : (
-        <div className="goal-list">
-          {goals.slice(0, 4).map((goal) => {
+        {goals.length === 0 ? (
+          <div className="empty-card">
+            <img src="/assets/rewards/gold.webp" alt="" />
+            <h3>先放进一个小愿望吧</h3>
+            <p>奶茶、玩偶、门票，想攒什么都可以。</p>
+            <button className="primary-button" type="button" onClick={onAdd}>添加第一个愿望</button>
+          </div>
+        ) : (
+          <div className="goal-list">
+            {goals.slice(0, 4).map((goal) => {
             const progress = goalProgress(state.currentBalanceMinor, goal.targetMinor);
             const percentage = Math.round(progress * 100);
             const remaining = Math.max(goal.targetMinor - state.currentBalanceMinor, 0);
@@ -822,18 +892,25 @@ function JarPage({
                 </div>
               </article>
             );
-          })}
-        </div>
-      )}
+            })}
+          </div>
+        )}
+      </div>
     </section>
   );
 }
 
-function JarBalanceArt({ active }: { active: boolean }) {
+function JarBalanceArt({
+  active,
+  heroRef,
+}: {
+  active: boolean;
+  heroRef: RefObject<HTMLDivElement | null>;
+}) {
   const [videoFailed, setVideoFailed] = useState(false);
 
   return (
-    <div className="balance-art" aria-hidden="true">
+    <div ref={heroRef} className="balance-art" aria-hidden="true">
       {!active || videoFailed ? (
         <img src="/assets/jar-still.webp" alt="" />
       ) : (

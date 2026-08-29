@@ -735,19 +735,28 @@ svg {
   margin: 0 auto;
   overflow: hidden;
   contain: paint;
-  transform-origin: 50% 0;
+  isolation: isolate;
   backface-visibility: hidden;
+  background: transparent;
+}
+
+.opening-experience::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
   background: var(--canvas);
-  transform: translate3d(0, 0, 0) scale(1);
-  transition: transform 820ms cubic-bezier(0.76, 0, 0.24, 1), opacity 180ms ease 620ms, border-radius 820ms cubic-bezier(0.76, 0, 0.24, 1);
-  will-change: transform, opacity, border-radius;
+  content: "";
+  opacity: 1;
+  transition: opacity 700ms cubic-bezier(0.22, 1, 0.36, 1) 90ms;
+  will-change: opacity;
 }
 
 .opening-experience.opening-collapsing {
-  border-radius: 24px;
-  opacity: 0;
-  transform: translate3d(0, clamp(78px, 14vh, 118px), 0) scale(0.91, 0.205);
   pointer-events: none;
+}
+
+.opening-experience.opening-collapsing::before {
+  opacity: 0;
 }
 
 .opening-toolbar {
@@ -759,6 +768,8 @@ svg {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  transition: opacity 180ms ease, transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform, opacity;
 }
 
 .translucent,
@@ -780,6 +791,8 @@ svg {
   right: 24px;
   left: 24px;
   text-align: center;
+  transition: opacity 180ms ease, transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform, opacity;
 }
 
 .opening-copy h1 {
@@ -800,7 +813,7 @@ svg {
 .opening-pill {
   position: absolute;
   z-index: 3;
-  top: 5%;
+  top: 24.35%;
   left: 14%;
   display: inline-flex;
   min-height: 40px;
@@ -811,6 +824,8 @@ svg {
   color: var(--ink);
   font-size: 14px;
   font-weight: 650;
+  transition: opacity 180ms ease 20ms, transform 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform, opacity;
 }
 
 .opening-media {
@@ -819,6 +834,20 @@ svg {
   inset: 22% 0 31%;
   overflow: hidden;
   background: var(--canvas);
+  clip-path: inset(0 round 0);
+  transform: translate3d(0, 0, 0) scale(1);
+  transform-origin: 0 0;
+  transition:
+    transform 840ms cubic-bezier(0.22, 1, 0.36, 1),
+    clip-path 840ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 100ms ease 790ms;
+  will-change: transform, clip-path, opacity;
+}
+
+.opening-collapsing .opening-media {
+  clip-path: var(--hero-final-clip, inset(0 round 22px));
+  opacity: 0;
+  transform: translate3d(var(--hero-shift-x, 0), var(--hero-shift-y, 0), 0) scale(var(--hero-scale, 1));
 }
 
 .opening-media video,
@@ -848,6 +877,8 @@ svg {
   bottom: calc(174px + env(safe-area-inset-bottom));
   left: 24px;
   text-align: center;
+  transition: opacity 180ms ease 25ms, transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform, opacity;
 }
 
 .opening-footer p {
@@ -876,6 +907,55 @@ svg {
   border-radius: 28px 28px 0 0;
   background: rgba(255, 254, 249, 0.98);
   box-shadow: 0 -10px 30px rgba(96, 75, 54, 0.035);
+  transition: opacity 260ms ease 80ms, transform 480ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform, opacity;
+}
+
+.opening-collapsing .opening-toolbar,
+.opening-collapsing .opening-copy,
+.opening-collapsing .opening-pill,
+.opening-collapsing .opening-footer {
+  opacity: 0;
+  transform: translate3d(0, -8px, 0);
+}
+
+.opening-collapsing .opening-jar-peek {
+  opacity: 0;
+  transform: translate3d(0, -54px, 0);
+}
+
+[data-opening-phase="opening"] .page-jar .jar-header,
+[data-opening-phase="opening"] .page-jar .balance-card,
+[data-opening-phase="opening"] .page-jar .jar-home-lower,
+[data-opening-phase="opening"] .bottom-navigation {
+  opacity: 0;
+}
+
+[data-opening-phase="collapsing"] .page-jar .jar-header {
+  animation: home-surface-rise 660ms cubic-bezier(0.22, 1, 0.36, 1) 130ms both;
+}
+
+[data-opening-phase="collapsing"] .page-jar .balance-card {
+  animation: home-surface-rise 700ms cubic-bezier(0.22, 1, 0.36, 1) 110ms both;
+}
+
+[data-opening-phase="collapsing"] .page-jar .jar-home-lower {
+  animation: home-surface-rise 650ms cubic-bezier(0.22, 1, 0.36, 1) 150ms both;
+}
+
+[data-opening-phase="collapsing"] .bottom-navigation {
+  animation: home-surface-rise 630ms cubic-bezier(0.22, 1, 0.36, 1) 140ms both;
+}
+
+@keyframes home-surface-rise {
+  from {
+    opacity: 0.58;
+    transform: translate3d(0, 120px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
 }
 
 .opening-sheet-handle {
@@ -1888,6 +1968,7 @@ body {
   }
 
   .opening-pill {
+    top: 23.35%;
     min-height: 36px;
     font-size: 13px;
   }
