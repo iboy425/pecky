@@ -159,6 +159,21 @@ def make_guided_plan(repetitions: int, seed: int) -> list[GuidedTrial]:
     return plan
 
 
+def make_single_action_plan(
+    action_code: str, repetitions: int
+) -> list[GuidedTrial]:
+    """生成只包含一种动作的顺序计划，避免不同标签写入同一 CSV。"""
+
+    if action_code not in {"l", "r", "c"}:
+        raise ValueError("单动作采集只支持 l、r、c")
+    if repetitions < 1:
+        raise ValueError("repetitions 必须至少为 1")
+    return [
+        GuidedTrial(action_code=action_code, repetition=repetition)
+        for repetition in range(1, repetitions + 1)
+    ]
+
+
 def parse_sample(line: str, received_at: str) -> Sample | None:
     """严格校验固件的固定位置 SAMPLE 行，保留原始数值文本。"""
 
@@ -558,16 +573,22 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--participant", help="匿名参与者编号，例如 P01")
     parser.add_argument("--session", help="场次编号，例如 S01")
-    parser.add_argument(
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
         "--guided",
         action="store_true",
         help="自动逐项提示正常、左、右、胸椎四种 3 秒动作",
+    )
+    mode_group.add_argument(
+        "--fixed-action",
+        choices=("l", "r", "c"),
+        help="只采集指定动作：l=左拉伸、r=右拉伸、c=胸椎舒展",
     )
     parser.add_argument(
         "--repetitions",
         type=int,
         default=1,
-        help="引导模式中每种动作的次数（默认 1）",
+        help="引导模式中每种动作或单动作模式的采集次数（默认 1）",
     )
     parser.add_argument(
         "--seed",
@@ -597,7 +618,13 @@ def main() -> int:
     participant = safe_id(participant_raw, "PILOT")
     session_id = safe_id(session_raw, "S01")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    csv_path = OUTPUT_DIR / f"chair_{participant}_{session_id}_{timestamp}.csv"
+    action_suffix = (
+        f"_{ACTIONS[args.fixed_action][1]}" if args.fixed_action else ""
+    )
+    csv_path = (
+        OUTPUT_DIR
+        / f"chair_{participant}_{session_id}{action_suffix}_{timestamp}.csv"
+    )
     session_started_at = local_iso_now()
 
     if serial is None or not hasattr(serial, "Serial"):
@@ -687,7 +714,33 @@ def main() -> int:
                     f"超声有效 {valid_ranges}/{possible_ranges}。"
                 )
 
-            if args.guided:
+            if args.fixed_action:
+                plan = make_single_action_plan(
+                    args.fixed_action, args.repetitions
+                )
+                action_name_zh = ACTIONS[args.fixed_action][2]
+                print(
+                    f"\n单动作采集：本文件只采集【{action_name_zh}】，"
+                    f"共 {len(plan)} 次。"
+                )
+                print("每次准备好后按 Enter；可在提示处输入 q 提前结束。")
+                for trial_index, trial in enumerate(plan, start=1):
+                    if not readiness_prompt(
+                        trial_index, len(plan), trial.action_code
+                    ):
+                        print("单动作采集已安全结束；此前完整动作均已保存。")
+                        break
+                    countdown()
+                    capture_and_save(
+                        trial.action_code,
+                        collection_mode="single_action",
+                        action_repetition=trial.repetition,
+                        guided_trial_index=trial_index,
+                        guided_trial_total=len(plan),
+                    )
+                else:
+                    print(f"\n{action_name_zh}已全部采集完成。")
+            elif args.guided:
                 effective_seed = (
                     args.seed
                     if args.seed is not None
