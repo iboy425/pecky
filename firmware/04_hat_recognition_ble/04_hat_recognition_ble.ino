@@ -77,6 +77,7 @@ uint32_t nextSampleUs = 0;
 uint32_t lastProgressMs = 0;
 bool imuReady = false;
 bool calibrated = false;
+bool recognitionEnabled = false;
 
 int16_t makeInt16(uint8_t highByte, uint8_t lowByte) {
   return static_cast<int16_t>((static_cast<uint16_t>(highByte) << 8) | lowByte);
@@ -435,6 +436,48 @@ void handlePendingCommand() {
   }
 }
 
+void printControlStatus() {
+  Serial.printf("STATUS,RECOGNITION,%s,CALIBRATED=%u,BLE=%u\n",
+                recognitionEnabled ? "RUNNING" : "PAUSED", calibrated ? 1U : 0U,
+                bleConnected ? 1U : 0U);
+}
+
+void handleSerialCommand(String command) {
+  command.trim();
+  command.toUpperCase();
+  if (command == "START") {
+    recognitionEnabled = true;
+    recognitionEngine.resetSessionRecognition();
+    Serial.println("CONTROL,STARTED");
+  } else if (command == "PAUSE") {
+    recognitionEnabled = false;
+    recognitionEngine.resetSessionRecognition();
+    Serial.println("CONTROL,PAUSED");
+  } else if (command == "STATUS") {
+    printControlStatus();
+  } else if (command == "CALIBRATE") {
+    recognitionEnabled = false;
+    calibrated = false;
+    const bool ok = calibrateAtNeutral();
+    Serial.printf("CONTROL,CALIBRATE,%s\n", ok ? "DONE" : "FAILED");
+  } else if (command.length() > 0) {
+    Serial.println("ERROR,CONTROL,USE_START_PAUSE_STATUS_OR_CALIBRATE");
+  }
+}
+
+void serviceSerialCommands() {
+  static String command;
+  while (Serial.available() > 0) {
+    const char value = static_cast<char>(Serial.read());
+    if (value == '\n' || value == '\r') {
+      if (command.length() > 0) handleSerialCommand(command);
+      command = "";
+    } else if (command.length() < 32) {
+      command += value;
+    }
+  }
+}
+
 }  // namespace
 
 void setup() {
@@ -471,6 +514,7 @@ void setup() {
   Serial.println("INFO,NVS_INIT_DONE");
   if (kEnableBleRadio) initializeBle();
   else Serial.println("INFO,USB_EVENT_MODE_READY");
+  Serial.println("CONTROL,PAUSED,SEND_START_WHEN_READY");
   nextSampleUs = micros() + kSamplePeriodUs;
 }
 
@@ -478,6 +522,11 @@ void loop() {
   // Process BLE commands even after a failed re-calibration, otherwise the
   // documented "send calibrate again" recovery path would be unreachable.
   handlePendingCommand();
+  serviceSerialCommands();
+  if (!recognitionEnabled) {
+    delay(10);
+    return;
+  }
   if (!imuReady || !calibrated) {
     delay(20);
     return;

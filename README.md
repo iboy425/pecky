@@ -88,6 +88,18 @@ npm run dev -- --host 0.0.0.0
 
 Use the actual serial device paths shown by `arduino-cli board list`; do not assume `/dev/ttyUSB0` and `/dev/ttyUSB1` on every computer. Web Bluetooth requires a secure context (HTTPS, except localhost) and a browser that supports it.
 
+### Terminal-controlled sessions
+
+Both devices boot calibrated but **paused**. Use the controller to decide exactly when a test starts, pauses, or recalibrates. Paused devices do not create BLE action notifications, so the app will not show captions or add cap events.
+
+```powershell
+# Windows terminal (the connected cap is COM7 and chair is COM8)
+py -3 tools\control_devices.py all status
+py -3 tools\control_devices.py all start
+py -3 tools\control_devices.py hat pause
+py -3 tools\control_devices.py chair calibrate
+```
+
 `npm test` builds the vinext/Cloudflare output and verifies the rendered PWA shell, production metadata, opening state machine, persistence contract, adapters, and required web assets.
 
 ## Project structure
