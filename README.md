@@ -100,6 +100,8 @@ py -3 tools\control_devices.py hat pause
 py -3 tools\control_devices.py chair calibrate
 ```
 
+For the full on-site runbook—including calibration, the recommended action order, connection recovery, and reflashing—see [the Chinese demo command manual](docs/demo-command-manual.md).
+
 `npm test` builds the vinext/Cloudflare output and verifies the rendered PWA shell, production metadata, opening state machine, persistence contract, adapters, and required web assets.
 
 ## Project structure
