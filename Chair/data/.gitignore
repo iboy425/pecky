@@ -1,0 +1,3 @@
+# Keep participant recordings local.
+*.csv
+!.gitignore
