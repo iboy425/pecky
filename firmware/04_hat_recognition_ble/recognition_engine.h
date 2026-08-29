@@ -444,6 +444,8 @@ class HeadResistanceRecognizer {
     pressureReady_ = false;
     selfTestActive_ = false;
     pressureWasReleased_ = true;
+    autoReleasedCount_ = 0;
+    recentMotionSamples_ = 0;
     reset();
   }
 
@@ -470,6 +472,7 @@ class HeadResistanceRecognizer {
     releaseCount_ = 0;
     holdCount_ = 0;
     invalidHoldCount_ = 0;
+    motionEvidence_ = false;
     startMs_ = 0;
     qualifiedHoldMs_ = 0;
   }
@@ -479,6 +482,25 @@ class HeadResistanceRecognizer {
     const bool pressureHigh = features.pressureFiltered >= pressureOn_;
     const bool pressureReleased = features.pressureFiltered <= pressureOff_;
     const bool pressureEngaged = !pressureReleased;
+    if (features.omegaDps >= 8.0f ||
+        fabsf(features.sagittalLinearG) >= 0.025f) {
+      recentMotionSamples_ = 15;  // Preserve onset evidence across pressure EMA delay.
+    } else if (recentMotionSamples_ > 0) {
+      --recentMotionSamples_;
+    }
+
+    // The cap must work without opening the App.  A stable released channel
+    // for 0.5 s after neutral calibration is sufficient to arm pressure
+    // recognition automatically.  The explicit BLE self-test remains useful
+    // as a diagnostic, but is no longer a product-startup dependency.
+    if (!pressureReady_ && !selfTestActive_) {
+      if (pressureReleased) {
+        if (autoReleasedCount_ < 12) ++autoReleasedCount_;
+        if (autoReleasedCount_ >= 12) pressureReady_ = true;
+      } else {
+        autoReleasedCount_ = 0;
+      }
+    }
 
     if (selfTestActive_) {
       if (selfTestSamplesRemaining_ > 0) --selfTestSamplesRemaining_;
@@ -512,6 +534,7 @@ class HeadResistanceRecognizer {
         if (pressureRisingEdge) {
           state_ = State::kPressing;
           startMs_ = features.timeMs;
+          motionEvidence_ = recentMotionSamples_ > 0;
         }
         break;
 
@@ -523,6 +546,10 @@ class HeadResistanceRecognizer {
         if (features.timeMs - startMs_ > 2500) {
           reset();
           break;
+        }
+        if (features.omegaDps >= 8.0f ||
+            fabsf(features.sagittalLinearG) >= 0.025f) {
+          motionEvidence_ = true;
         }
         if (highCount_ >= 10 && features.tiltDeg < 10.0f) {
           state_ = State::kHold;
@@ -544,9 +571,10 @@ class HeadResistanceRecognizer {
           reset();
           break;
         }
-        // Two seconds for the hackathon demo. Change 50 to 125 for the 5 s
-        // training product requirement without changing the App protocol.
-        if (holdCount_ >= 50) {
+        // Real participant recordings contain valid holds of 1.4--2.9 s.
+        // Count after one qualified second, but only when pressure and head
+        // motion appeared together; touching the loose pad alone is rejected.
+        if (holdCount_ >= 25 && motionEvidence_) {
           qualifiedHoldMs_ = holdCount_ * kSamplePeriodMs;
           state_ = State::kRelease;
         }
@@ -598,10 +626,13 @@ class HeadResistanceRecognizer {
   uint16_t selfTestSamplesRemaining_ = 0;
   uint8_t selfTestReleasedCount_ = 0;
   uint8_t selfTestHighCount_ = 0;
+  uint8_t autoReleasedCount_ = 0;
+  uint8_t recentMotionSamples_ = 0;
   uint16_t highCount_ = 0;
   uint8_t releaseCount_ = 0;
   uint16_t holdCount_ = 0;
   uint8_t invalidHoldCount_ = 0;
+  bool motionEvidence_ = false;
   uint32_t startMs_ = 0;
   uint32_t qualifiedHoldMs_ = 0;
 };
@@ -712,7 +743,11 @@ class RecognitionEngine {
     }
 
     if (accepted.valid) {
-      cooldownSamples_ = accepted.action == ActionType::kChinTuck ? 50 : 38;
+      // Pressure already requires a full release, so a short 0.48 s refractory
+      // period is sufficient and does not hide the next supervised repetition.
+      cooldownSamples_ = accepted.action == ActionType::kHeadResistance
+                             ? 12
+                             : (accepted.action == ActionType::kChinTuck ? 50 : 38);
       extension_.reset();
       chinTuck_.reset();
       resistance_.reset();

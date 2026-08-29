@@ -11,11 +11,11 @@ Pecky is a mobile-first savings companion for the Pecky hardware concept. It tur
 - A wish can only be marked purchased when the balance is sufficient. Purchase confirmation deducts the target amount, removes the wish, and adds a history record.
 - Lifetime saved amount and lifetime pecks never decrease after a purchase.
 - The Me page contains profile details, lifetime totals, achievements, purchase history, and data settings.
-- Version 1 uses local IndexedDB only. There are no accounts, cloud sync, or active Bluetooth permissions.
+- Version 1 stores data in local IndexedDB and can connect directly to the Pecky cap through Web Bluetooth. There are no accounts or cloud sync.
 
 ## Hardware-ready event contract
 
-The simulator, JSON importer, and future BLE adapter implement the same data-source interface in `app/lib/sources.ts`. Every event carries peck count and money independently; the web app does not assume a conversion rate.
+The simulator, JSON importer, and live BLE adapter implement the same data-source interface in `app/lib/sources.ts`. BLE completion events also preserve the recognized action (`neck_extension`, `chin_tuck`, or `head_resistance`).
 
 ```json
 {
@@ -64,6 +64,12 @@ npm run lint
 npm test
 ```
 
+The cap firmware uses `NimBLE-Arduino` 2.5.x. Install it once before compiling `firmware/04_hat_recognition_ble`:
+
+```powershell
+arduino-cli lib install "NimBLE-Arduino@2.5.1"
+```
+
 `npm test` builds the vinext/Cloudflare output and verifies the rendered PWA shell, production metadata, opening state machine, persistence contract, adapters, and required web assets.
 
 ## Project structure
@@ -71,7 +77,7 @@ npm test
 - `app/components/PeckyApp.tsx` — mobile UI, interaction state, and opening transition
 - `app/lib/model.ts` — money, wishes, purchases, achievements, and event rules
 - `app/lib/storage.ts` — atomic IndexedDB persistence and cross-tab refresh
-- `app/lib/sources.ts` — simulator, JSON import, and reserved BLE adapter contract
+- `app/lib/sources.ts` — simulator, JSON import, and live Web Bluetooth adapter
 - `public/manifest.webmanifest` and `public/sw.js` — installable/offline PWA shell
 - `scripts/prepare-assets.mjs` — read-only derivation of approved source artwork into web assets
 

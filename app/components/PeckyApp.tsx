@@ -41,6 +41,7 @@ import {
   updatePeckyState,
 } from "../lib/storage";
 import {
+  BlePeckyDataSource,
   JsonImportDataSource,
   MockPeckyDataSource,
   sampleImportPayload,
@@ -123,6 +124,11 @@ export function PeckyApp() {
   const homeHeroRef = useRef<HTMLDivElement>(null);
   const rewardPauseTimer = useRef<number | null>(null);
   const transitionEndTimer = useRef<number | null>(null);
+  const bleSource = useRef<BlePeckyDataSource | null>(null);
+  const bleUnsubscribe = useRef<(() => void) | null>(null);
+  const [bleConnection, setBleConnection] = useState<"disconnected" | "connecting" | "connected" | "unavailable">(
+    typeof navigator !== "undefined" && "bluetooth" in navigator ? "disconnected" : "unavailable",
+  );
 
   const showToast = useCallback(
     (message: string, tone: "info" | "success" | "error" = "info") => {
@@ -370,7 +376,7 @@ export function PeckyApp() {
   const ingestFromSource = useCallback(
     async (
       source: PeckyDataSource,
-      options: { notify?: boolean } = {},
+      options: { notify?: boolean; keepConnected?: boolean } = {},
     ): Promise<boolean> => {
       let unsubscribe: () => void = () => undefined;
       let connected = false;
@@ -418,9 +424,9 @@ export function PeckyApp() {
       };
 
       try {
-        const latest = await loadPeckyState({ seedDemo });
         await source.connect();
         connected = true;
+        const latest = await loadPeckyState({ seedDemo });
         unsubscribe = source.subscribe((batch) => {
           subscriptionQueue = subscriptionQueue.then(async () => {
             const result = await applyBatch(batch);
@@ -435,8 +441,14 @@ export function PeckyApp() {
         primaryFailure = true;
         showToast(error instanceof Error ? error.message : "数据接收失败", "error");
       } finally {
-        unsubscribe();
-        if (connected) {
+        if (options.keepConnected && connected && !primaryFailure && source instanceof BlePeckyDataSource) {
+          bleSource.current = source;
+          bleUnsubscribe.current = unsubscribe;
+          setBleConnection("connected");
+        } else {
+          unsubscribe();
+        }
+        if (connected && !(options.keepConnected && !primaryFailure)) {
           try {
             await source.disconnect();
           } catch {
@@ -449,6 +461,32 @@ export function PeckyApp() {
     },
     [commit, seedDemo, showToast],
   );
+
+  const handleBleToggle = useCallback(async () => {
+    if (bleSource.current) {
+      const source = bleSource.current;
+      bleUnsubscribe.current?.();
+      bleUnsubscribe.current = null;
+      bleSource.current = null;
+      await source.disconnect();
+      setBleConnection("disconnected");
+      showToast("帽子已断开", "info");
+      return;
+    }
+    setBleConnection("connecting");
+    const source = new BlePeckyDataSource();
+    await ingestFromSource(source, { notify: false, keepConnected: true });
+    if (source.getConnectionState() === "connected") {
+      showToast("帽子已连接，动作完成后会立即同步", "success");
+    } else {
+      setBleConnection(source.getConnectionState());
+    }
+  }, [ingestFromSource, showToast]);
+
+  useEffect(() => () => {
+    bleUnsubscribe.current?.();
+    void bleSource.current?.disconnect();
+  }, []);
 
   const handleJsonFile = useCallback(
     async (file: File) => {
@@ -681,6 +719,8 @@ export function PeckyApp() {
           }
           onPreview={simulateOpeningPreview}
           onJsonFile={handleJsonFile}
+          bleConnection={bleConnection}
+          onBleToggle={handleBleToggle}
           onInstall={handleInstall}
           installAvailable={Boolean(installPrompt)}
           onLoadDemo={() => setConfirmation({ kind: "demo" })}
@@ -1299,6 +1339,8 @@ function SettingsSheet({
   onSimulate,
   onPreview,
   onJsonFile,
+  bleConnection,
+  onBleToggle,
   onInstall,
   installAvailable,
   onLoadDemo,
@@ -1310,6 +1352,8 @@ function SettingsSheet({
   onSimulate: (pecks: number, amount: number) => Promise<boolean>;
   onPreview: (pecks: number, amount: number) => Promise<boolean>;
   onJsonFile: (file: File) => Promise<void>;
+  bleConnection: "disconnected" | "connecting" | "connected" | "unavailable";
+  onBleToggle: () => Promise<void>;
   onInstall: () => Promise<void>;
   installAvailable: boolean;
   onLoadDemo: () => void;
@@ -1352,6 +1396,12 @@ function SettingsSheet({
     URL.revokeObjectURL(url);
   };
 
+  const toggleBle = async () => {
+    setBusy(true);
+    await onBleToggle();
+    setBusy(false);
+  };
+
   return (
     <Sheet title="设置与数据" onClose={onClose} className="settings-sheet">
       <div className="settings-stack">
@@ -1388,8 +1438,10 @@ function SettingsSheet({
 
         <section className="ble-card">
           <div className="ble-icon"><PeckyIcon name="bluetooth" /></div>
-          <div><h3>Pecky 硬件</h3><p>BLE 连接生命周期、订阅和游标接口已预留。</p></div>
-          <span>待联调</span>
+          <div><h3>Pecky 帽子</h3><p>{bleConnection === "connected" ? "实时接收三类动作，完成即计数" : "连接后无需点 Start，帽子本地识别并推送"}</p></div>
+          <button type="button" disabled={busy || bleConnection === "unavailable"} onClick={toggleBle}>
+            {bleConnection === "connected" ? "断开" : bleConnection === "connecting" ? "连接中" : bleConnection === "unavailable" ? "浏览器不支持" : "连接"}
+          </button>
         </section>
 
         <section className="settings-group">
