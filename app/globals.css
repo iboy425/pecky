@@ -170,11 +170,9 @@ svg {
 .balance-art {
   position: absolute;
   z-index: 0;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 66%;
+  inset: 0;
   overflow: hidden;
+  background: var(--hero);
   pointer-events: none;
 }
 
@@ -197,6 +195,11 @@ svg {
 .balance-art video {
   z-index: 1;
   background: var(--hero);
+}
+
+.balance-art-video {
+  backface-visibility: hidden;
+  transform: translateZ(0);
 }
 
 .balance-copy {

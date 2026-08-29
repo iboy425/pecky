@@ -112,7 +112,6 @@ export function PeckyApp() {
   const [tab, setTab] = useState<TabId>("jar");
   const [openingPhase, setOpeningPhase] = useState<OpeningPhase>("booting");
   const [openingBatch, setOpeningBatch] = useState<OpeningBatch | null>(null);
-  const [jarArrivalKey, setJarArrivalKey] = useState(0);
   const [modal, setModal] = useState<ModalState>(null);
   const [confirmation, setConfirmation] = useState<ConfirmationState>(null);
   const [toast, setToast] = useState<{ message: string; tone: "info" | "success" | "error" } | null>(null);
@@ -222,7 +221,6 @@ export function PeckyApp() {
     if (!openingBatch || finishingOpening.current) return;
     finishingOpening.current = true;
     setOpeningPhase("collapsing");
-    setJarArrivalKey((current) => current + 1);
 
     try {
       const next = await updatePeckyState(
@@ -521,7 +519,6 @@ export function PeckyApp() {
         {tab === "jar" ? (
           <JarPage
             state={state}
-            arrivalKey={jarArrivalKey}
             artActive={openingPhase === "ready"}
             onAdd={() => setModal({ kind: "goal" })}
             onEdit={(goal) => setModal({ kind: "goal", goal })}
@@ -735,7 +732,6 @@ function OpeningExperience({
 
 function JarPage({
   state,
-  arrivalKey,
   artActive,
   onAdd,
   onEdit,
@@ -743,7 +739,6 @@ function JarPage({
   onShowAll,
 }: {
   state: PeckyState;
-  arrivalKey: number;
   artActive: boolean;
   onAdd: () => void;
   onEdit: (goal: WishGoal) => void;
@@ -767,7 +762,7 @@ function JarPage({
           <strong>{formatMoney(state.currentBalanceMinor)}</strong>
           <p>每一粒，都算数</p>
         </div>
-        <JarBalanceArt arrivalKey={arrivalKey} active={artActive} />
+        <JarBalanceArt active={artActive} />
       </section>
 
       <div className="section-heading">
@@ -834,53 +829,8 @@ function JarPage({
   );
 }
 
-function JarBalanceArt({ arrivalKey, active }: { arrivalKey: number; active: boolean }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
+function JarBalanceArt({ active }: { active: boolean }) {
   const [videoFailed, setVideoFailed] = useState(false);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const playIfAllowed = () => {
-      if (reducedMotion.matches) {
-        video.pause();
-        return;
-      }
-      video.muted = true;
-      video.play().catch(() => undefined);
-    };
-
-    const onMotionChange = () => playIfAllowed();
-    video.addEventListener("canplay", playIfAllowed);
-    reducedMotion.addEventListener("change", onMotionChange);
-    playIfAllowed();
-
-    return () => {
-      video.removeEventListener("canplay", playIfAllowed);
-      reducedMotion.removeEventListener("change", onMotionChange);
-    };
-  }, [videoFailed]);
-
-  useEffect(() => {
-    if (arrivalKey === 0 || videoFailed) return;
-    const video = videoRef.current;
-    if (!video || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-
-    const restart = () => {
-      video.currentTime = 0;
-      video.muted = true;
-      video.play().catch(() => undefined);
-    };
-
-    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-      restart();
-      return;
-    }
-    video.addEventListener("canplay", restart, { once: true });
-    return () => video.removeEventListener("canplay", restart);
-  }, [active, arrivalKey, videoFailed]);
 
   return (
     <div className="balance-art" aria-hidden="true">
@@ -888,13 +838,14 @@ function JarBalanceArt({ arrivalKey, active }: { arrivalKey: number; active: boo
         <img src="/assets/jar-still.webp" alt="" />
       ) : (
         <video
-          ref={videoRef}
-          src="/assets/media/pecky-orbit.mp4?v=3"
+          className="balance-art-video"
+          src="/assets/media/pecky-orbit.mp4?v=4"
           autoPlay
           loop
           muted
           playsInline
-          preload="metadata"
+          preload="auto"
+          poster="/assets/jar-still.webp"
           onError={() => setVideoFailed(true)}
         />
       )}
