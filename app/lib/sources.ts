@@ -266,6 +266,93 @@ export class BlePeckyDataSource implements PeckyDataSource {
   }
 }
 
+/** USB fallback for the prototype board. It consumes the exact EVENT JSON
+ * already emitted by the firmware, so recognition still happens on the hat. */
+export class SerialPeckyDataSource implements PeckyDataSource {
+  readonly id = "serial" as const;
+  private connectionState: DataSourceConnectionState = "disconnected";
+  private port: SerialPort | null = null;
+  private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  private listeners = new Set<(batch: PeckyEventBatch) => void>();
+  private stopped = false;
+
+  getConnectionState(): DataSourceConnectionState {
+    return typeof navigator === "undefined" || !("serial" in navigator) ? "unavailable" : this.connectionState;
+  }
+
+  async connect(): Promise<void> {
+    const serial = (navigator as Navigator & { serial?: Serial }).serial;
+    if (!serial) throw new Error("当前浏览器不支持 USB 串口，请用桌面 Chrome 打开");
+    this.connectionState = "connecting";
+    try {
+      this.port = await serial.requestPort();
+      await this.port.open({ baudRate: 115200 });
+      this.connectionState = "connected";
+      this.stopped = false;
+      void this.readLoop();
+    } catch (error) {
+      this.connectionState = "disconnected";
+      throw error;
+    }
+  }
+
+  async disconnect(): Promise<void> {
+    this.stopped = true;
+    await this.reader?.cancel().catch(() => undefined);
+    this.reader?.releaseLock();
+    this.reader = null;
+    await this.port?.close().catch(() => undefined);
+    this.port = null;
+    this.connectionState = "disconnected";
+  }
+
+  async pull(): Promise<PeckyEventBatch> { return { events: [] }; }
+  subscribe(listener: (batch: PeckyEventBatch) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private async readLoop(): Promise<void> {
+    if (!this.port?.readable) return;
+    this.reader = this.port.readable.getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
+    try {
+      while (!this.stopped) {
+        const { value, done } = await this.reader.read();
+        if (done) break;
+        pending += value ? decoder.decode(value, { stream: true }) : "";
+        const lines = pending.split(/\r?\n/);
+        pending = lines.pop() ?? "";
+        lines.forEach((line) => this.handleLine(line));
+      }
+    } catch {
+      // Disconnects are reflected by the UI state when the user reconnects.
+    }
+  }
+
+  private handleLine(line: string): void {
+    if (!line.startsWith("EVENT,")) return;
+    const jsonAt = line.indexOf("{", 6);
+    if (jsonAt < 0) return;
+    try {
+      const message = JSON.parse(line.slice(jsonAt)) as Record<string, unknown>;
+      if (message.t !== "r") return;
+      const sequence = Number(message.q);
+      const code = Number(message.c);
+      if (!Number.isSafeInteger(sequence) || sequence < 0) return;
+      const action: PeckyAction | null = code === 1 ? "neck_extension" : code === 2 ? "chin_tuck" : code === 3 ? "head_resistance" : null;
+      if (!action) return;
+      const event: ExternalPeckyEvent = {
+        eventId: `PECKY-USB-${sequence}`, deviceId: "PECKY-USB", sequence,
+        peckCount: 1, action, amountDelta: 1, occurredAt: new Date().toISOString(),
+      };
+      const batch = { events: [event], cursor: String(sequence) };
+      this.listeners.forEach((listener) => listener(batch));
+    } catch { /* malformed serial diagnostics are ignored */ }
+  }
+}
+
 export function sampleImportPayload(): { version: 1; events: ExternalPeckyEvent[] } {
   return {
     version: 1,

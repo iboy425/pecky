@@ -32,3 +32,13 @@ interface BluetoothRemoteGATTCharacteristic extends EventTarget {
   stopNotifications(): Promise<BluetoothRemoteGATTCharacteristic>;
   writeValueWithoutResponse(value: BufferSource): Promise<void>;
 }
+
+interface SerialPort {
+  readonly readable?: ReadableStream<Uint8Array>;
+  open(options: { baudRate: number }): Promise<void>;
+  close(): Promise<void>;
+}
+
+interface Serial {
+  requestPort(): Promise<SerialPort>;
+}

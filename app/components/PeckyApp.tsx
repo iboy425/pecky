@@ -42,6 +42,7 @@ import {
 } from "../lib/storage";
 import {
   BlePeckyDataSource,
+  SerialPeckyDataSource,
   JsonImportDataSource,
   MockPeckyDataSource,
   sampleImportPayload,
@@ -126,9 +127,13 @@ export function PeckyApp() {
   const rewardPauseTimer = useRef<number | null>(null);
   const transitionEndTimer = useRef<number | null>(null);
   const bleSource = useRef<BlePeckyDataSource | null>(null);
+  const serialSource = useRef<SerialPeckyDataSource | null>(null);
   const bleUnsubscribe = useRef<(() => void) | null>(null);
   const [bleConnection, setBleConnection] = useState<"disconnected" | "connecting" | "connected" | "unavailable">(
     typeof navigator !== "undefined" && "bluetooth" in navigator ? "disconnected" : "unavailable",
+  );
+  const [serialConnection, setSerialConnection] = useState<"disconnected" | "connecting" | "connected" | "unavailable">(
+    typeof navigator !== "undefined" && "serial" in navigator ? "disconnected" : "unavailable",
   );
 
   const showToast = useCallback(
@@ -442,10 +447,12 @@ export function PeckyApp() {
         primaryFailure = true;
         showToast(error instanceof Error ? error.message : "数据接收失败", "error");
       } finally {
-        if (options.keepConnected && connected && !primaryFailure && source instanceof BlePeckyDataSource) {
-          bleSource.current = source;
+        if (options.keepConnected && connected && !primaryFailure && (source instanceof BlePeckyDataSource || source instanceof SerialPeckyDataSource)) {
+          if (source instanceof BlePeckyDataSource) bleSource.current = source;
+          else serialSource.current = source;
           bleUnsubscribe.current = unsubscribe;
-          setBleConnection("connected");
+          if (source instanceof BlePeckyDataSource) setBleConnection("connected");
+          else setSerialConnection("connected");
         } else {
           unsubscribe();
         }
@@ -484,9 +491,29 @@ export function PeckyApp() {
     }
   }, [ingestFromSource, showToast]);
 
+  const handleSerialToggle = useCallback(async () => {
+    if (serialSource.current) {
+      const source = serialSource.current;
+      serialSource.current = null;
+      await source.disconnect();
+      setSerialConnection("disconnected");
+      showToast("USB 帽子已断开", "info");
+      return;
+    }
+    setSerialConnection("connecting");
+    const source = new SerialPeckyDataSource();
+    await ingestFromSource(source, { notify: false, keepConnected: true });
+    if (source.getConnectionState() === "connected") {
+      serialSource.current = source;
+      setSerialConnection("connected");
+      showToast("USB 帽子已连接，动作完成会立即同步", "success");
+    } else setSerialConnection(source.getConnectionState());
+  }, [ingestFromSource, showToast]);
+
   useEffect(() => () => {
     bleUnsubscribe.current?.();
     void bleSource.current?.disconnect();
+    void serialSource.current?.disconnect();
   }, []);
 
   const handleJsonFile = useCallback(
@@ -721,6 +748,8 @@ export function PeckyApp() {
           onPreview={simulateOpeningPreview}
           onJsonFile={handleJsonFile}
           bleConnection={bleConnection}
+          serialConnection={serialConnection}
+          toggleSerial={handleSerialToggle}
           onBleToggle={handleBleToggle}
           onInstall={handleInstall}
           installAvailable={Boolean(installPrompt)}
@@ -1341,6 +1370,8 @@ function SettingsSheet({
   onPreview,
   onJsonFile,
   bleConnection,
+  serialConnection,
+  toggleSerial,
   onBleToggle,
   onInstall,
   installAvailable,
@@ -1354,6 +1385,8 @@ function SettingsSheet({
   onPreview: (pecks: number, amount: number) => Promise<boolean>;
   onJsonFile: (file: File) => Promise<void>;
   bleConnection: "disconnected" | "connecting" | "connected" | "unavailable";
+  serialConnection: "disconnected" | "connecting" | "connected" | "unavailable";
+  toggleSerial: () => void;
   onBleToggle: () => Promise<void>;
   onInstall: () => Promise<void>;
   installAvailable: boolean;
@@ -1442,6 +1475,13 @@ function SettingsSheet({
           <div><h3>Pecky 帽子</h3><p>{bleConnection === "connected" ? "实时接收三类动作，完成即计数" : "连接后无需点 Start，帽子本地识别并推送"}</p></div>
           <button type="button" disabled={busy || bleConnection === "unavailable"} onClick={toggleBle}>
             {bleConnection === "connected" ? "断开" : bleConnection === "connecting" ? "连接中" : bleConnection === "unavailable" ? "浏览器不支持" : "连接"}
+          </button>
+        </section>
+        <section className="ble-card">
+          <div className="ble-icon"><PeckyIcon name="bluetooth" /></div>
+          <div><h3>USB 直连（当前可用）</h3><p>用 COM7 对应的 USB 线直接实时接收帽子识别结果</p></div>
+          <button type="button" disabled={busy || serialConnection === "unavailable"} onClick={toggleSerial}>
+            {serialConnection === "connected" ? "断开" : serialConnection === "connecting" ? "连接中" : serialConnection === "unavailable" ? "浏览器不支持" : "连接 USB"}
           </button>
         </section>
 
