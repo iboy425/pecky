@@ -1,0 +1,3 @@
+# WSL launchers must never be converted to CRLF: Bash reads a trailing \r in
+# `set -o pipefail` as part of the option name and refuses to start.
+*.sh text eol=lf

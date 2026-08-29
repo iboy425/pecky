@@ -1,11 +1,10 @@
 /*
- * Qingxian Chair — local recognizer + BLE action events.
+ * Qingxian Chair — calibrated local recognizer + BLE action events.
  *
- * The recognizer calibrates its five range channels while the user remains in
- * neutral posture, then looks for sustained inward movement at the left,
- * right, or centre channel group. This is a real, sensor-driven classifier:
- * no serial command or timer can generate an action event. Tune the thresholds
- * below only after collecting representative data for the installed chair.
+ * The installed chair has one consistently useful range channel (HC4) plus a
+ * working MPU-6050. The recognizer waits for a deliberate movement, records
+ * its HC4 distance peak, then emits exactly one action after the movement
+ * settles. It is re-armed only after returning to neutral.
  */
 #include <Arduino.h>
 #include <NimBLEDevice.h>
@@ -16,18 +15,24 @@ namespace {
 constexpr uint32_t kBaud = 115200;
 constexpr uint8_t kTrig[] = {4, 6, 10, 15, 17};
 constexpr uint8_t kEcho[] = {5, 7, 11, 16, 18};
-constexpr uint8_t kMpuSda = 8, kMpuScl = 9;
-constexpr uint32_t kFrameMs = 180, kCalibrationMs = 3500, kCooldownMs = 1800;
-constexpr float kMovementCm = 11.0f;
+constexpr uint8_t kMpuSda = 8, kMpuScl = 9, kMpuAddress = 0x68;
+constexpr uint32_t kFrameMs = 180, kCalibrationMs = 3500;
+constexpr uint32_t kMinimumActionMs = 450, kMaximumActionMs = 2600, kNeutralRearmMs = 850;
+// Derived from LATEST_20260830: HC4 neutral≈9 cm, left≈15–20, right≈25–33.
+constexpr float kStartMovementDps = 1.6f, kSettleMovementDps = 0.9f;
+constexpr float kNeutralDistanceCm = 2.5f, kLeftDistanceCm = 4.0f, kRightDistanceCm = 13.0f;
 constexpr char kServiceUuid[] = "2f6f2000-8d0a-4e3d-bbc6-9f536a6ed001";
 constexpr char kEventUuid[] = "2f6f2001-8d0a-4e3d-bbc6-9f536a6ed001";
 
+enum class RecognitionPhase : uint8_t { kWaiting, kTracking, kNeedsNeutral };
 NimBLECharacteristic* eventCharacteristic = nullptr;
-float baseline[5] = {NAN, NAN, NAN, NAN, NAN};
-uint16_t baselineCount[5] = {};
-uint32_t calibrationStarted = 0, nextFrame = 0, lastEvent = 0, sequence = 0;
-uint8_t candidate = 0, candidateFrames = 0;
+float baselineRange[5] = {NAN, NAN, NAN, NAN, NAN};
+float baselineGyro[3] = {0, 0, 0};
+uint16_t baselineRangeCount[5] = {}, baselineGyroCount = 0;
+uint32_t calibrationStarted = 0, nextFrame = 0, sequence = 0, actionStarted = 0, neutralStarted = 0;
+float peakHc4Delta = 0;
 bool recognitionEnabled = false;
+RecognitionPhase phase = RecognitionPhase::kWaiting;
 
 float readDistance(uint8_t index) {
   digitalWrite(kTrig[index], LOW); delayMicroseconds(3);
@@ -38,49 +43,84 @@ float readDistance(uint8_t index) {
   return cm >= 2 && cm <= 150 ? cm : NAN;
 }
 
+bool readGyro(float* gyro) {
+  Wire.beginTransmission(kMpuAddress); Wire.write(0x43);
+  if (Wire.endTransmission(false) != 0 || Wire.requestFrom(kMpuAddress, static_cast<uint8_t>(6), true) != 6) return false;
+  for (uint8_t i = 0; i < 3; ++i) {
+    const int16_t raw = static_cast<int16_t>((static_cast<uint16_t>(Wire.read()) << 8) | Wire.read());
+    gyro[i] = raw / 131.0f;
+  }
+  return true;
+}
+
 void publish(uint8_t code) {
   ++sequence;
   char message[48];
   snprintf(message, sizeof(message), "{\"v\":1,\"t\":\"a\",\"q\":%lu,\"c\":%u}", static_cast<unsigned long>(sequence), code);
-  eventCharacteristic->setValue(message);
-  eventCharacteristic->notify();
+  eventCharacteristic->setValue(message); eventCharacteristic->notify();
   Serial.printf("ACTION,%lu,%u\n", static_cast<unsigned long>(sequence), code);
 }
 
-void calibrate(const float* ranges) {
-  for (uint8_t i = 0; i < 5; ++i) {
-    if (!isfinite(ranges[i])) continue;
-    ++baselineCount[i];
-    baseline[i] = !isfinite(baseline[i]) ? ranges[i] : baseline[i] + (ranges[i] - baseline[i]) / baselineCount[i];
+void resetRecognition() { phase = RecognitionPhase::kWaiting; actionStarted = neutralStarted = 0; peakHc4Delta = 0; }
+
+void calibrate(const float* ranges, const float* gyro, bool gyroOk) {
+  for (uint8_t i = 0; i < 5; ++i) if (isfinite(ranges[i])) {
+    ++baselineRangeCount[i];
+    baselineRange[i] = !isfinite(baselineRange[i]) ? ranges[i] : baselineRange[i] + (ranges[i] - baselineRange[i]) / baselineRangeCount[i];
+  }
+  if (gyroOk) { ++baselineGyroCount; for (uint8_t i = 0; i < 3; ++i) baselineGyro[i] += (gyro[i] - baselineGyro[i]) / baselineGyroCount; }
+}
+
+float gyroDeltaDps(const float* gyro, bool gyroOk) {
+  if (!gyroOk || baselineGyroCount == 0) return 0;
+  float sum = 0; for (uint8_t i = 0; i < 3; ++i) sum += sq(gyro[i] - baselineGyro[i]);
+  return sqrtf(sum);
+}
+
+float hc4DeltaCm(const float* ranges) { return isfinite(ranges[3]) && isfinite(baselineRange[3]) ? ranges[3] - baselineRange[3] : 0; }
+uint8_t actionForPeak(float peakDelta) { return peakDelta >= kRightDistanceCm ? 2 : peakDelta >= kLeftDistanceCm ? 1 : 3; }
+
+void updateRecognition(uint32_t now, const float* ranges, const float* gyro, bool gyroOk) {
+  const float movement = gyroDeltaDps(gyro, gyroOk), hc4Delta = hc4DeltaCm(ranges);
+  const bool neutral = fabsf(hc4Delta) < kNeutralDistanceCm && movement <= kSettleMovementDps;
+  if (phase == RecognitionPhase::kNeedsNeutral) {
+    if (!neutral) { neutralStarted = 0; return; }
+    if (!neutralStarted) neutralStarted = now;
+    if (now - neutralStarted >= kNeutralRearmMs) resetRecognition();
+    return;
+  }
+  if (phase == RecognitionPhase::kWaiting) {
+    if (movement >= kStartMovementDps || hc4Delta >= kLeftDistanceCm) {
+      phase = RecognitionPhase::kTracking; actionStarted = now; peakHc4Delta = max(0.0f, hc4Delta);
+      Serial.printf("PROGRESS,MOTION_STARTED,HC4_DELTA=%.2f,GYRO_DELTA=%.2f\n", hc4Delta, movement);
+    }
+    return;
+  }
+  peakHc4Delta = max(peakHc4Delta, hc4Delta);
+  const uint32_t elapsed = now - actionStarted;
+  if ((elapsed >= kMinimumActionMs && movement <= kSettleMovementDps) || elapsed >= kMaximumActionMs) {
+    const uint8_t action = actionForPeak(peakHc4Delta);
+    publish(action);
+    Serial.printf("PROGRESS,ACTION_DONE,CODE=%u,HC4_PEAK=%.2f,ELAPSED_MS=%lu\n", action, peakHc4Delta, static_cast<unsigned long>(elapsed));
+    phase = RecognitionPhase::kNeedsNeutral; neutralStarted = 0;
   }
 }
 
-uint8_t classify(const float* ranges) {
-  // A closer torso/arm produces a positive inward movement value.
-  const float left = (isfinite(ranges[0]) && isfinite(baseline[0]) ? baseline[0] - ranges[0] : 0) +
-                     (isfinite(ranges[1]) && isfinite(baseline[1]) ? baseline[1] - ranges[1] : 0);
-  const float right = (isfinite(ranges[3]) && isfinite(baseline[3]) ? baseline[3] - ranges[3] : 0) +
-                      (isfinite(ranges[4]) && isfinite(baseline[4]) ? baseline[4] - ranges[4] : 0);
-  const float centre = isfinite(ranges[2]) && isfinite(baseline[2]) ? baseline[2] - ranges[2] : 0;
-  if (centre >= kMovementCm && centre > left * .62f && centre > right * .62f) return 3;
-  if (left >= kMovementCm && left > right * 1.20f) return 1;
-  if (right >= kMovementCm && right > left * 1.20f) return 2;
-  return 0;
+void setupBle() {
+  NimBLEDevice::init("Qingxian-Chair"); NimBLEDevice::setPower(-12);
+  NimBLEServer* server = NimBLEDevice::createServer(); server->advertiseOnDisconnect(true);
+  NimBLEService* service = server->createService(kServiceUuid);
+  eventCharacteristic = service->createCharacteristic(kEventUuid, NIMBLE_PROPERTY::NOTIFY); service->start();
+  NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+  advertising->addServiceUUID(kServiceUuid); advertising->enableScanResponse(true); NimBLEDevice::startAdvertising();
 }
 
-void setupBle() {
-  NimBLEDevice::init("Qingxian-Chair");
-  NimBLEDevice::setPower(-12);
-  NimBLEServer* server = NimBLEDevice::createServer();
-  // Keep the chair discoverable after every app disconnect; recognition pause
-  // affects only action events, never the availability of the BLE service.
-  server->advertiseOnDisconnect(true);
-  NimBLEService* service = server->createService(kServiceUuid);
-  eventCharacteristic = service->createCharacteristic(kEventUuid, NIMBLE_PROPERTY::NOTIFY);
-  service->start();
-  NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
-  advertising->addServiceUUID(kServiceUuid); advertising->enableScanResponse(true);
-  NimBLEDevice::startAdvertising();
+void beginCalibration() {
+  calibrationStarted = millis(); baselineGyroCount = 0;
+  for (uint8_t i = 0; i < 5; ++i) { baselineRange[i] = NAN; baselineRangeCount[i] = 0; }
+  for (uint8_t i = 0; i < 3; ++i) baselineGyro[i] = 0;
+  resetRecognition(); recognitionEnabled = false;
+  Serial.println("CONTROL,CALIBRATING,KEEP_NEUTRAL_FOR_3_5_SECONDS");
 }
 
 void serviceSerialCommands() {
@@ -89,10 +129,10 @@ void serviceSerialCommands() {
     const char value = static_cast<char>(Serial.read());
     if (value != '\n' && value != '\r') { if (command.length() < 32) command += value; continue; }
     command.trim(); command.toUpperCase();
-    if (command == "START") { recognitionEnabled = true; candidate = candidateFrames = 0; Serial.println("CONTROL,STARTED"); }
-    else if (command == "PAUSE") { recognitionEnabled = false; candidate = candidateFrames = 0; Serial.println("CONTROL,PAUSED"); }
-    else if (command == "STATUS") Serial.printf("STATUS,RECOGNITION,%s,CALIBRATED=%u\n", recognitionEnabled ? "RUNNING" : "PAUSED", millis() - calibrationStarted >= kCalibrationMs ? 1U : 0U);
-    else if (command == "CALIBRATE") { calibrationStarted = millis(); for (uint8_t i = 0; i < 5; ++i) { baseline[i] = NAN; baselineCount[i] = 0; } recognitionEnabled = false; Serial.println("CONTROL,CALIBRATING"); }
+    if (command == "START") { recognitionEnabled = true; resetRecognition(); Serial.println("CONTROL,STARTED"); }
+    else if (command == "PAUSE") { recognitionEnabled = false; resetRecognition(); Serial.println("CONTROL,PAUSED"); }
+    else if (command == "STATUS") Serial.printf("STATUS,RECOGNITION,%s,CALIBRATED=%u,MODEL=HC4_MPU_ACTION_COMPLETE\n", recognitionEnabled ? "RUNNING" : "PAUSED", millis() - calibrationStarted >= kCalibrationMs ? 1U : 0U);
+    else if (command == "CALIBRATE") beginCalibration();
     else if (command.length() > 0) Serial.println("ERROR,CONTROL,USE_START_PAUSE_STATUS_OR_CALIBRATE");
     command = "";
   }
@@ -102,10 +142,10 @@ void serviceSerialCommands() {
 void setup() {
   Serial.begin(kBaud); delay(500);
   for (uint8_t i = 0; i < 5; ++i) { pinMode(kTrig[i], OUTPUT); digitalWrite(kTrig[i], LOW); pinMode(kEcho[i], INPUT); }
-  Wire.begin(kMpuSda, kMpuScl, 400000);  // Reserved for the next fused model; range recognition works without it.
-  setupBle(); calibrationStarted = millis();
-  Serial.println("READY,CHAIR_RECOGNITION_BLE_V1,KEEP_NEUTRAL_FOR_3_5_SECONDS");
-  Serial.println("CONTROL,PAUSED,SEND_START_WHEN_READY");
+  Wire.begin(kMpuSda, kMpuScl, 400000);
+  Wire.beginTransmission(kMpuAddress); Wire.write(0x6B); Wire.write(0); Wire.endTransmission(true);
+  setupBle(); beginCalibration();
+  Serial.println("READY,CHAIR_RECOGNITION_BLE_V2,MODEL=HC4_MPU_ACTION_COMPLETE");
 }
 
 void loop() {
@@ -113,14 +153,9 @@ void loop() {
   const uint32_t now = millis();
   if (static_cast<int32_t>(now - nextFrame) < 0) return;
   nextFrame = now + kFrameMs;
-  float ranges[5];
+  float ranges[5], gyro[3];
   for (uint8_t i = 0; i < 5; ++i) { ranges[i] = readDistance(i); delay(30); }
-  if (now - calibrationStarted < kCalibrationMs) { calibrate(ranges); return; }
-  if (!recognitionEnabled) return;
-  const uint8_t detected = classify(ranges);
-  if (detected == candidate) ++candidateFrames; else { candidate = detected; candidateFrames = detected ? 1 : 0; }
-  if (candidate && candidateFrames >= 2 && now - lastEvent >= kCooldownMs) { publish(candidate); lastEvent = now; candidateFrames = 0; }
-  // Adapt very slowly only while neutral, compensating for sensor drift without
-  // absorbing a held exercise posture into the baseline.
-  if (!detected) for (uint8_t i = 0; i < 5; ++i) if (isfinite(ranges[i]) && isfinite(baseline[i])) baseline[i] = baseline[i] * .995f + ranges[i] * .005f;
+  const bool gyroOk = readGyro(gyro);
+  if (now - calibrationStarted < kCalibrationMs) { calibrate(ranges, gyro, gyroOk); return; }
+  if (recognitionEnabled) updateRecognition(now, ranges, gyro, gyroOk);
 }
