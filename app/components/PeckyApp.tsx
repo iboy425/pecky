@@ -248,32 +248,49 @@ export function PeckyApp() {
       const clipY = Math.max((sourceRect.height - visibleHeight) / 2, 0);
       const shiftX = targetRect.left - sourceRect.left - clipX * scale;
       const shiftY = targetRect.top - sourceRect.top - clipY * scale;
-      const targetRadius = Number.parseFloat(getComputedStyle(targetHero).borderRadius) || 22;
+      const clipContainer = targetHero.parentElement;
+      const clipRect = clipContainer?.getBoundingClientRect();
+      const clipStyle = getComputedStyle(clipContainer ?? targetHero);
+      const topRightInset = clipRect
+        ? Math.max(targetRect.top - clipRect.top, clipRect.right - targetRect.right, 0)
+        : 0;
+      const bottomRightInset = clipRect
+        ? Math.max(clipRect.bottom - targetRect.bottom, clipRect.right - targetRect.right, 0)
+        : 0;
+      const topRightRadius = Math.max(
+        Number.parseFloat(clipStyle.borderTopRightRadius) - topRightInset,
+        0,
+      );
+      const bottomRightRadius = Math.max(
+        Number.parseFloat(clipStyle.borderBottomRightRadius) - bottomRightInset,
+        0,
+      );
 
       sourceHero.style.setProperty("--hero-shift-x", `${shiftX}px`);
       sourceHero.style.setProperty("--hero-shift-y", `${shiftY}px`);
       sourceHero.style.setProperty("--hero-scale", String(scale));
       sourceHero.style.setProperty(
         "--hero-final-clip",
-        `inset(${clipY}px ${clipX}px ${clipY}px ${clipX}px round ${targetRadius / scale}px)`,
+        `inset(${clipY}px ${clipX}px ${clipY}px ${clipX}px round 0px ${topRightRadius / scale}px ${bottomRightRadius / scale}px 0px)`,
       );
     }
 
     setOpeningPhase("collapsing");
 
-    void updatePeckyState(
-        (current) => completeOpeningEvents(current, openingBatch.eventIds),
-        { seedDemo },
-      )
-      .then(setState)
-      .catch((error: unknown) => {
-        showToast(error instanceof Error ? error.message : "开屏记录保存失败", "error");
-      });
-
+    const eventIds = [...openingBatch.eventIds];
     transitionEndTimer.current = window.setTimeout(() => {
       setOpeningPhase("ready");
       setOpeningBatch(null);
       transitionEndTimer.current = null;
+
+      void updatePeckyState(
+        (current) => completeOpeningEvents(current, eventIds),
+        { seedDemo },
+      )
+        .then(setState)
+        .catch((error: unknown) => {
+          showToast(error instanceof Error ? error.message : "开屏记录保存失败", "error");
+        });
     }, reducedMotion ? 90 : 940);
   }, [openingBatch, seedDemo, showToast]);
 
@@ -706,8 +723,17 @@ function OpeningExperience({
   onRewardComplete: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const videoFallbackTimer = useRef<number | null>(null);
   const [muted, setMuted] = useState(!soundEnabled);
   const [videoFailed, setVideoFailed] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (videoFallbackTimer.current !== null) {
+        window.clearTimeout(videoFallbackTimer.current);
+      }
+    };
+  }, []);
 
   const toggleSound = () => {
     const video = videoRef.current;
@@ -761,7 +787,12 @@ function OpeningExperience({
             }}
             onError={() => {
               setVideoFailed(true);
-              window.setTimeout(onRewardComplete, 700);
+              if (videoFallbackTimer.current === null) {
+                videoFallbackTimer.current = window.setTimeout(() => {
+                  videoFallbackTimer.current = null;
+                  onRewardComplete();
+                }, 700);
+              }
             }}
           />
         )}

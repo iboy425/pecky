@@ -752,7 +752,7 @@ svg {
 }
 
 .opening-experience.opening-collapsing {
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .opening-experience.opening-collapsing::before {
@@ -916,6 +916,7 @@ svg {
 .opening-collapsing .opening-pill,
 .opening-collapsing .opening-footer {
   opacity: 0;
+  pointer-events: none;
   transform: translate3d(0, -8px, 0);
 }
 
@@ -939,6 +940,10 @@ svg {
   animation: home-surface-rise 700ms cubic-bezier(0.22, 1, 0.36, 1) 110ms both;
 }
 
+[data-opening-phase="collapsing"] .page-jar .balance-art {
+  animation: hero-target-reveal 100ms ease 790ms both;
+}
+
 [data-opening-phase="collapsing"] .page-jar .jar-home-lower {
   animation: home-surface-rise 650ms cubic-bezier(0.22, 1, 0.36, 1) 150ms both;
 }
@@ -955,6 +960,15 @@ svg {
   to {
     opacity: 1;
     transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes hero-target-reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 
