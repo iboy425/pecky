@@ -587,10 +587,11 @@ class HeadResistanceRecognizer {
           reset();
           break;
         }
-        // Real participant recordings contain valid holds of 1.4--2.9 s.
-        // Count after one qualified second, but only when pressure and head
-        // motion appeared together; touching the loose pad alone is rejected.
-        if (holdCount_ >= 25 && motionEvidence_) {
+        // The pressure pad is the explicit confirmation for the supported
+        // "hands-on-head resistance" exercise. A one-second stable press is
+        // sufficient; requiring a second IMU-motion cue made a valid static
+        // resistance hold impossible to complete on the assembled cap.
+        if (holdCount_ >= 25) {
           qualifiedHoldMs_ = holdCount_ * kSamplePeriodMs;
           state_ = State::kRelease;
         }
@@ -598,14 +599,14 @@ class HeadResistanceRecognizer {
       }
 
       case State::kRelease:
-        // A long press can never count twice. Only a full release and neutral
-        // return emits the single event.
+        // A long press can never count twice. Emit only after a real release,
+        // so the subtitle and amount change occur when the repetition ends.
         if (pressureReleased) {
           if (releaseCount_ < 12) ++releaseCount_;
         } else {
           releaseCount_ = 0;
         }
-        if (releaseCount_ >= 12 && features.neutralStable) {
+        if (releaseCount_ >= 3) {
           result.valid = true;
           result.action = ActionType::kHeadResistance;
           result.confidence = clampf(0.80f + features.pressureDelta / 12000.0f,
