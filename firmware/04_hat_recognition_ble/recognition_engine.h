@@ -191,13 +191,16 @@ class FeatureExtractor {
     features.pressureFiltered = pressureFiltered_;
     features.pressureDelta = pressureFiltered_ - profile_.pressureBaseline;
 
-    const bool neutralNow = features.tiltDeg < 6.0f && features.omegaDps < 18.0f;
+    // The assembled MPU6500 reports a noisier resting gyro than the bench
+    // unit. These limits still require a stationary, upright pose but let the
+    // physical cap leave the safety re-arm state after a USB START command.
+    const bool neutralNow = features.tiltDeg < 9.0f && features.omegaDps < 35.0f;
     if (neutralNow) {
-      if (neutralStableCount_ < 12) ++neutralStableCount_;
+      if (neutralStableCount_ < 6) ++neutralStableCount_;
     } else {
       neutralStableCount_ = 0;
     }
-    features.neutralStable = neutralStableCount_ >= 12;
+    features.neutralStable = neutralStableCount_ >= 6;
     return features;
   }
 
