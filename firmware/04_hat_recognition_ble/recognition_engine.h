@@ -559,7 +559,7 @@ class HeadResistanceRecognizer {
           reset();
           break;
         }
-        if (features.timeMs - startMs_ > 2500) {
+        if (features.timeMs - startMs_ > 5000) {
           reset();
           break;
         }
@@ -567,7 +567,7 @@ class HeadResistanceRecognizer {
             fabsf(features.sagittalLinearG) >= 0.025f) {
           motionEvidence_ = true;
         }
-        if (highCount_ >= 10 && features.tiltDeg < 10.0f) {
+        if (highCount_ >= 10) {
           state_ = State::kHold;
           holdCount_ = 0;
           invalidHoldCount_ = 0;
@@ -579,14 +579,10 @@ class HeadResistanceRecognizer {
           reset();
           break;
         }
-        const bool stableHold = features.tiltDeg < 10.0f && features.omegaDps < 25.0f;
-        if (stableHold) {
-          if (holdCount_ < 250) ++holdCount_;
-          invalidHoldCount_ = 0;
-        } else if (++invalidHoldCount_ > 5) {
-          reset();
-          break;
-        }
+        // For hands-on-head resistance, sustained pressure is the reliable
+        // signal. The head naturally shifts against the hands, so IMU tilt
+        // must not reject an otherwise valid resistance hold.
+        if (holdCount_ < 250) ++holdCount_;
         // The pressure pad is the explicit confirmation for the supported
         // "hands-on-head resistance" exercise. A one-second stable press is
         // sufficient; requiring a second IMU-motion cue made a valid static
