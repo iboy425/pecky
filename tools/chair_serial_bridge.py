@@ -21,9 +21,9 @@ line_queue: queue.Queue[str] = queue.Queue()
 device: serial.Serial | None = None
 next_event_sequence = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
 LOG_PATH = os.path.join(os.environ.get("TEMP", "."), "pecky-chair-serial-bridge.log")
-# Codes 1 and 2 remain accepted for compatibility with older flashed chair
-# firmware, but both are intentionally presented as the same user action.
-ACTIONS = {1: ("stretch", "拉伸"), 2: ("stretch", "拉伸"), 3: ("chest_extension", "胸椎舒展")}
+# Keep accepting every code emitted by current and older chair firmware, but
+# present all of them as the single reliable demo action.
+ACTIONS = {1: ("stretch", "拉伸"), 2: ("stretch", "拉伸"), 3: ("stretch", "拉伸")}
 
 
 def log(message: str) -> None:

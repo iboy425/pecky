@@ -195,13 +195,10 @@ void updateMotionTrace(const float* ranges, const float* accel, const float* gyr
 }
 
 uint8_t actionForTrace() {
-  const float sideAccel = max(fabsf(minAccelDelta[1]), fabsf(maxAccelDelta[1]));
-  const float sideGyro = max(fabsf(minGyroDelta[2]), fabsf(maxGyroDelta[2]));
-  const bool directionalSide = sideAccel >= kSideAccelY && sideGyro >= kSideGyroZ;
-  const bool rangeBackedSide = sideAccel >= kRangeBackedSideAccelY && peakAbsHc4Delta >= kRangeBackedSideCm;
-  const bool hc2BackedSide = hc2Appeared && sideAccel >= kRangeBackedSideAccelY;
-  if (directionalSide || rangeBackedSide || hc2BackedSide) return 1;  // generic stretch
-  return 3;
+  // Direction and posture are deliberately not classified in the final demo.
+  // Reaching this point already means a complete, significant chair motion
+  // was detected, so publish the single generic stretch action.
+  return 1;
 }
 
 void finishAction(uint32_t now) {

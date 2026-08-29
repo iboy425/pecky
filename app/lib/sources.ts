@@ -438,7 +438,9 @@ export class ChairBridgeDataSource implements PeckyDataSource {
       const message = JSON.parse(String(event.data)) as { type?: string; event?: unknown; recognizedAction?: unknown };
       if (message.type !== "event" || !message.event) return;
       const candidate = message.recognizedAction as { action?: unknown; label?: unknown } | undefined;
-      const action = typeof candidate?.action === "string" ? candidate.action : null;
+      // The chair demo intentionally has one action: any recognized chair
+      // movement is presented and rewarded as a generic stretch.
+      const action = typeof candidate?.action === "string" ? "stretch" : null;
       const label = action ? chairActionLabel(action) : null;
       this.listeners.forEach((listener) => listener({
         events: [message.event],
@@ -491,14 +493,14 @@ export class ChairBleDataSource implements PeckyDataSource {
     try {
       const message: unknown = JSON.parse(new TextDecoder().decode(new Uint8Array(value.buffer, value.byteOffset, value.byteLength)));
       const code = message && typeof message === "object" && !Array.isArray(message) ? (message as { c?: unknown }).c : null;
-      const action = code === 1 || code === 2 ? "stretch" : code === 3 ? "chest_extension" : null;
+      const action = code === 1 || code === 2 || code === 3 ? "stretch" : null;
       if (action) this.listeners.forEach((listener) => listener({ events: [], recognizedActions: [{ device: "chair", action, label: chairActionLabel(action) }] }));
     } catch { /* Ignore a malformed packet. */ }
   };
 }
 
 function hatActionLabel(action: PeckyAction): string { return ({ neck_extension: "后仰脖子", chin_tuck: "收下巴", head_resistance: "抱头抗阻" })[action]; }
-function chairActionLabel(action: string): string { return ({ stretch: "拉伸", chest_extension: "胸椎舒展" })[action] ?? "椅子动作"; }
+function chairActionLabel(_action: string): string { return "拉伸"; }
 
 export function sampleImportPayload(): { version: 1; events: ExternalPeckyEvent[] } {
   return {
