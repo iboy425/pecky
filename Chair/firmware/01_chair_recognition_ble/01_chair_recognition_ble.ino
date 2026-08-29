@@ -21,16 +21,16 @@ constexpr uint32_t kMinimumActionMs = 650, kMaximumActionMs = 5000;
 constexpr uint32_t kSettleConfirmMs = 320, kNeutralRearmMs = 700;
 // Derived from LATEST_20260830: seated neutral≈9 cm, left≈15–20,
 // right≈25–33. START recalibrates this baseline for the current sitter.
-constexpr float kStartMovementDps = 1.8f, kSettleMovementDps = 1.4f;
-constexpr float kStartTiltG = 0.025f;
-constexpr float kStrongMovementDps = 3.0f, kStrongTiltG = 0.022f;
-constexpr float kRangeMovementDps = 0.8f, kRangeTiltG = 0.012f;
-constexpr float kLeftDistanceCm = 3.0f;
+constexpr float kStartMovementDps = 1.0f, kSettleMovementDps = 1.4f;
+constexpr float kStartTiltG = 0.010f;
+constexpr float kStrongMovementDps = 1.8f, kStrongTiltG = 0.010f;
+constexpr float kRangeMovementDps = 0.55f, kRangeTiltG = 0.007f;
+constexpr float kSideDistanceCm = 2.5f;
 // Both side directions are intentionally one "stretch" action. The installed
 // chair trace shows side movement on accel-Y, supported by gyro-Z or HC4;
 // symmetric chest extension keeps accel-Y much closer to zero.
-constexpr float kSideAccelY = 0.018f, kSideGyroZ = 3.2f;
-constexpr float kRangeBackedSideAccelY = 0.015f, kRangeBackedSideCm = 5.0f;
+constexpr float kSideAccelY = 0.012f, kSideGyroZ = 1.8f;
+constexpr float kRangeBackedSideAccelY = 0.010f, kRangeBackedSideCm = 3.0f;
 constexpr uint8_t kMaxCalibrationSamples = 24;
 constexpr char kServiceUuid[] = "2f6f2000-8d0a-4e3d-bbc6-9f536a6ed001";
 constexpr char kEventUuid[] = "2f6f2001-8d0a-4e3d-bbc6-9f536a6ed001";
@@ -44,7 +44,7 @@ float baselineGyro[3] = {0, 0, 0};
 uint16_t baselineRangeCount[5] = {}, baselineGyroCount = 0;
 uint32_t calibrationStarted = 0, nextFrame = 0, sequence = 0, actionStarted = 0;
 uint32_t neutralStarted = 0, settleStarted = 0, lastSensorLog = 0;
-float peakHc4Delta = 0, peakTiltDelta = 0;
+float peakHc4Delta = 0, peakAbsHc4Delta = 0, peakTiltDelta = 0;
 float minAccelDelta[3] = {}, maxAccelDelta[3] = {}, minGyroDelta[3] = {}, maxGyroDelta[3] = {};
 bool recognitionEnabled = false, calibrationFinalized = false;
 bool outwardSettled = false, returnMovementSeen = false, hc2Appeared = false;
@@ -108,7 +108,7 @@ void publish(uint8_t code) {
 void resetRecognition() {
   phase = RecognitionPhase::kWaiting;
   actionStarted = neutralStarted = settleStarted = 0;
-  peakHc4Delta = peakTiltDelta = 0;
+  peakHc4Delta = peakAbsHc4Delta = peakTiltDelta = 0;
   outwardSettled = returnMovementSeen = hc2Appeared = false;
   startEvidenceFrames = 0;
 }
@@ -165,7 +165,9 @@ float accelDeltaG(const float* accel, bool motionOk) {
 float hc4DeltaCm(const float* ranges) { return isfinite(ranges[3]) && isfinite(baselineRange[3]) ? ranges[3] - baselineRange[3] : 0; }
 
 void beginMotionTrace(const float* ranges, const float* accel, const float* gyro, bool motionOk) {
-  peakHc4Delta = max(0.0f, hc4DeltaCm(ranges));
+  const float hc4Delta = hc4DeltaCm(ranges);
+  peakHc4Delta = max(0.0f, hc4Delta);
+  peakAbsHc4Delta = fabsf(hc4Delta);
   peakTiltDelta = accelDeltaG(accel, motionOk);
   hc2Appeared = !isfinite(baselineRange[1]) && isfinite(ranges[1]);
   for (uint8_t i = 0; i < 3; ++i) {
@@ -177,7 +179,9 @@ void beginMotionTrace(const float* ranges, const float* accel, const float* gyro
 }
 
 void updateMotionTrace(const float* ranges, const float* accel, const float* gyro, bool motionOk) {
-  peakHc4Delta = max(peakHc4Delta, hc4DeltaCm(ranges));
+  const float hc4Delta = hc4DeltaCm(ranges);
+  peakHc4Delta = max(peakHc4Delta, hc4Delta);
+  peakAbsHc4Delta = max(peakAbsHc4Delta, fabsf(hc4Delta));
   peakTiltDelta = max(peakTiltDelta, accelDeltaG(accel, motionOk));
   hc2Appeared = hc2Appeared || (!isfinite(baselineRange[1]) && isfinite(ranges[1]));
   if (!motionOk) return;
@@ -194,7 +198,7 @@ uint8_t actionForTrace() {
   const float sideAccel = max(fabsf(minAccelDelta[1]), fabsf(maxAccelDelta[1]));
   const float sideGyro = max(fabsf(minGyroDelta[2]), fabsf(maxGyroDelta[2]));
   const bool directionalSide = sideAccel >= kSideAccelY && sideGyro >= kSideGyroZ;
-  const bool rangeBackedSide = sideAccel >= kRangeBackedSideAccelY && peakHc4Delta >= kRangeBackedSideCm;
+  const bool rangeBackedSide = sideAccel >= kRangeBackedSideAccelY && peakAbsHc4Delta >= kRangeBackedSideCm;
   const bool hc2BackedSide = hc2Appeared && sideAccel >= kRangeBackedSideAccelY;
   if (directionalSide || rangeBackedSide || hc2BackedSide) return 1;  // generic stretch
   return 3;
@@ -204,8 +208,8 @@ void finishAction(uint32_t now) {
   const uint8_t action = actionForTrace();
   publish(action);
   Serial.printf(
-      "PROGRESS,ACTION_DONE,CODE=%u,HC4_PEAK=%.2f,TILT_PEAK=%.3f,AY_RANGE=%.3f/%.3f,GZ_RANGE=%.2f/%.2f,HC2_APPEARED=%u,ELAPSED_MS=%lu\n",
-      action, peakHc4Delta, peakTiltDelta, minAccelDelta[1], maxAccelDelta[1], minGyroDelta[2], maxGyroDelta[2], hc2Appeared ? 1U : 0U,
+      "PROGRESS,ACTION_DONE,CODE=%u,HC4_ABS_PEAK=%.2f,TILT_PEAK=%.3f,AY_RANGE=%.3f/%.3f,GZ_RANGE=%.2f/%.2f,HC2_APPEARED=%u,ELAPSED_MS=%lu\n",
+      action, peakAbsHc4Delta, peakTiltDelta, minAccelDelta[1], maxAccelDelta[1], minGyroDelta[2], maxGyroDelta[2], hc2Appeared ? 1U : 0U,
       static_cast<unsigned long>(now - actionStarted));
   phase = RecognitionPhase::kNeedsNeutral;
   neutralStarted = settleStarted = 0;
@@ -230,6 +234,7 @@ void updateRecognition(uint32_t now, const float* ranges, const float* accel, co
     if (!neutralStarted) neutralStarted = now;
     if (now - neutralStarted >= kNeutralRearmMs) {
       for (uint8_t i = 0; i < 3; ++i) { baselineAccel[i] = accel[i]; baselineGyro[i] = gyro[i]; }
+      for (uint8_t i = 0; i < 5; ++i) if (isfinite(ranges[i])) baselineRange[i] = ranges[i];
       resetRecognition();
       Serial.println("PROGRESS,REARMED");
     }
@@ -239,7 +244,7 @@ void updateRecognition(uint32_t now, const float* ranges, const float* accel, co
     // HC4 has two stable echo modes roughly 25 cm apart even when nobody
     // moves. A range change is therefore accepted only alongside real body
     // motion; chest movement uses the stricter IMU-only gate.
-    const bool rangeMovement = hc4Delta >= kLeftDistanceCm &&
+    const bool rangeMovement = fabsf(hc4Delta) >= kSideDistanceCm &&
                                movement >= kRangeMovementDps && tilt >= kRangeTiltG;
     const bool chestMovement = movement >= kStartMovementDps && tilt >= kStartTiltG;
     const bool deliberate = rangeMovement || chestMovement;

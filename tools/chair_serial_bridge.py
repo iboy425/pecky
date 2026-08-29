@@ -19,6 +19,7 @@ from websockets.asyncio.server import serve
 PORT, BAUD, clients = "COM8", 115200, set()
 line_queue: queue.Queue[str] = queue.Queue()
 device: serial.Serial | None = None
+next_event_sequence = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
 LOG_PATH = os.path.join(os.environ.get("TEMP", "."), "pecky-chair-serial-bridge.log")
 # Codes 1 and 2 remain accepted for compatibility with older flashed chair
 # firmware, but both are intentionally presented as the same user action.
@@ -62,14 +63,17 @@ def shutdown_device() -> None:
 
 
 async def broadcast(line: str) -> None:
+    global next_event_sequence
     if not line.startswith("ACTION,"):
         return
     try:
-        _, sequence_text, code_text = line.split(",", 2)
-        sequence, code = int(sequence_text), int(code_text)
+        _, firmware_sequence_text, code_text = line.split(",", 2)
+        firmware_sequence, code = int(firmware_sequence_text), int(code_text)
         action = ACTIONS.get(code)
-        if sequence < 0 or action is None:
+        if firmware_sequence < 0 or action is None:
             return
+        next_event_sequence += 1
+        sequence = next_event_sequence
         action_id, label = action
         # Chair actions deliberately have no `action` field in the monetary
         # event: only cap actions are part of the persisted PeckyAction enum.
@@ -83,7 +87,7 @@ async def broadcast(line: str) -> None:
         }
         message = json.dumps({"type": "event", "event": event, "recognizedAction": {"action": action_id, "label": label}})
         await asyncio.gather(*(client.send(message) for client in clients), return_exceptions=True)
-        log(f"EVENT_BROADCAST {sequence} {action_id}")
+        log(f"EVENT_BROADCAST firmware={firmware_sequence} app={sequence} {action_id}")
     except (ValueError, TypeError):
         return
 

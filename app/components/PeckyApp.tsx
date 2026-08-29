@@ -913,10 +913,11 @@ function OpeningExperience({
             poster="/assets/media/pecky-opening-poster.jpg?v=5"
             onEnded={onRewardComplete}
             onCanPlay={(event) => {
-              event.currentTarget.play().catch(() => {
-                event.currentTarget.muted = true;
+              const video = event.currentTarget;
+              video.play().catch(() => {
+                video.muted = true;
                 setMuted(true);
-                event.currentTarget.play().catch(() => setVideoFailed(true));
+                video.play().catch(() => setVideoFailed(true));
               });
             }}
             onError={() => {

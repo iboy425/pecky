@@ -6,13 +6,14 @@ disconnects. Run on Windows (the WSL wrapper invokes it for you).
 """
 from __future__ import annotations
 
-import asyncio, json, os, queue, sys, threading
+import asyncio, datetime, json, os, queue, sys, threading
 import serial
 from websockets.asyncio.server import serve
 
 PORT, BAUD, clients = "COM7", 115200, set()
 line_queue: queue.Queue[str] = queue.Queue()
 device: serial.Serial | None = None
+next_event_sequence = int(datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000)
 LOG_PATH = os.path.join(os.environ.get("TEMP", "."), "pecky-serial-bridge.log")
 
 def log(message: str) -> None:
@@ -46,6 +47,7 @@ def shutdown_device() -> None:
     device.close()
 
 async def broadcast(line: str) -> None:
+    global next_event_sequence
     if not line.startswith("EVENT,"): return
     at = line.find("{")
     if at < 0: return
@@ -55,7 +57,8 @@ async def broadcast(line: str) -> None:
         code = payload.get("c")
         action = {1: "neck_extension", 2: "chin_tuck", 3: "head_resistance"}.get(code)
         if not action: return
-        event = {"eventId": f"PECKY-BRIDGE-{payload['q']}", "deviceId": "PECKY-USB-BRIDGE", "sequence": payload["q"], "peckCount": 1, "amountDelta": 1, "action": action, "occurredAt": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()}
+        next_event_sequence += 1
+        event = {"eventId": f"PECKY-BRIDGE-{next_event_sequence}", "deviceId": "PECKY-USB-BRIDGE", "sequence": next_event_sequence, "peckCount": 1, "amountDelta": 1, "action": action, "occurredAt": datetime.datetime.now(datetime.timezone.utc).isoformat()}
         message = json.dumps({"type": "event", "event": event})
         await asyncio.gather(*(client.send(message) for client in clients), return_exceptions=True)
     except (KeyError, ValueError, TypeError): pass
