@@ -41,6 +41,7 @@ from sklearn.metrics import (
     balanced_accuracy_score,
     confusion_matrix,
     f1_score,
+    precision_recall_fscore_support,
 )
 from torch import Tensor, nn
 from torch.utils.data import DataLoader, Dataset
@@ -173,10 +174,26 @@ def load_session_windows(
     neutral_gyro = neutral[["gx_raw", "gy_raw", "gz_raw"]].to_numpy(np.float32).mean(axis=0)
     neutral_pressure = float(neutral["pressure_raw"].median())
 
+    # Convert sensor XYZ into a participant-neutral head coordinate frame.
+    # vertical is measured gravity; board Y is approximately left/right in the
+    # fixed cap mounting and is projected orthogonal to gravity; forward is the
+    # remaining sagittal axis. This removes most cap pitch/roll placement offset
+    # before the temporal network sees a window.
+    vertical = neutral_accel / max(float(np.linalg.norm(neutral_accel)), 1.0)
+    board_y = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+    lateral = board_y - float(np.dot(board_y, vertical)) * vertical
+    if float(np.linalg.norm(lateral)) < 0.1:
+        board_z = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+        lateral = board_z - float(np.dot(board_z, vertical)) * vertical
+    lateral /= max(float(np.linalg.norm(lateral)), 1e-6)
+    forward = np.cross(vertical, lateral)
+    forward /= max(float(np.linalg.norm(forward)), 1e-6)
+    head_axes = np.stack((forward, lateral, vertical), axis=0)
+
     acceleration = dataframe[["ax_raw", "ay_raw", "az_raw"]].to_numpy(np.float32)
-    acceleration = acceleration / 16384.0 - neutral_accel / 16384.0
+    acceleration = (acceleration / 16384.0 - neutral_accel / 16384.0) @ head_axes.T
     gyro = dataframe[["gx_raw", "gy_raw", "gz_raw"]].to_numpy(np.float32)
-    gyro = gyro / 131.0 - neutral_gyro / 131.0
+    gyro = (gyro / 131.0 - neutral_gyro / 131.0) @ head_axes.T
     pressure = dataframe["pressure_raw"].to_numpy(np.float32)
     # The 12-bit ADC scaling prevents pressure magnitude from overwhelming the
     # six IMU channels.  It remains a model feature, not a hard requirement.
@@ -218,15 +235,28 @@ def class_histogram(labels: np.ndarray) -> dict[str, int]:
 
 
 def make_metrics(labels: np.ndarray, predictions: np.ndarray) -> dict[str, object]:
+    precision, recall, f1, support = precision_recall_fscore_support(
+        labels,
+        predictions,
+        average=None,
+        labels=range(len(CLASS_NAMES)),
+        zero_division=0,
+    )
     return {
         "accuracy": round(float(accuracy_score(labels, predictions)), 6),
         "balanced_accuracy": round(float(balanced_accuracy_score(labels, predictions)), 6),
         "macro_f1": round(float(f1_score(labels, predictions, average="macro", zero_division=0)), 6),
         "per_class_f1": {
-            CLASS_NAMES[index]: round(float(score), 6)
-            for index, score in enumerate(
-                f1_score(labels, predictions, average=None, labels=range(len(CLASS_NAMES)), zero_division=0)
-            )
+            CLASS_NAMES[index]: round(float(score), 6) for index, score in enumerate(f1)
+        },
+        "per_class_precision": {
+            CLASS_NAMES[index]: round(float(score), 6) for index, score in enumerate(precision)
+        },
+        "per_class_recall": {
+            CLASS_NAMES[index]: round(float(score), 6) for index, score in enumerate(recall)
+        },
+        "per_class_samples": {
+            CLASS_NAMES[index]: int(count) for index, count in enumerate(support)
         },
         "confusion_matrix_rows_actual_columns_predicted": confusion_matrix(
             labels, predictions, labels=range(len(CLASS_NAMES))
@@ -335,6 +365,52 @@ def train_model(
     return model, {"best_epoch": best_epoch, "validation": best_metrics}
 
 
+def evaluate_quality_gate(
+    validation_metrics: dict[str, object],
+    minimum_balanced_accuracy: float,
+    minimum_neck_extension_f1: float,
+    minimum_chin_tuck_f1: float,
+    minimum_head_resistance_precision: float,
+    minimum_head_resistance_recall: float,
+) -> tuple[bool, dict[str, dict[str, object]]]:
+    """Apply the product acceptance criteria without hiding class imbalance.
+
+    The product requirement names percentages per action.  We use precision and
+    recall for resistance instead of its raw accuracy: because non-resistance
+    windows are plentiful, raw binary accuracy could look high even if the cap
+    never recognised a real hands-behind-head exercise.
+    """
+
+    per_f1 = validation_metrics["per_class_f1"]
+    per_precision = validation_metrics["per_class_precision"]
+    per_recall = validation_metrics["per_class_recall"]
+    criteria = {
+        "overall_balanced_accuracy": {
+            "actual": float(validation_metrics["balanced_accuracy"]),
+            "minimum": minimum_balanced_accuracy,
+        },
+        "neck_extension_f1": {
+            "actual": float(per_f1["neck_extension"]),
+            "minimum": minimum_neck_extension_f1,
+        },
+        "chin_tuck_f1": {
+            "actual": float(per_f1["chin_tuck"]),
+            "minimum": minimum_chin_tuck_f1,
+        },
+        "head_resistance_precision": {
+            "actual": float(per_precision["head_resistance"]),
+            "minimum": minimum_head_resistance_precision,
+        },
+        "head_resistance_recall": {
+            "actual": float(per_recall["head_resistance"]),
+            "minimum": minimum_head_resistance_recall,
+        },
+    }
+    for criterion in criteria.values():
+        criterion["passed"] = bool(float(criterion["actual"]) >= float(criterion["minimum"]))
+    return all(bool(criterion["passed"]) for criterion in criteria.values()), criteria
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
@@ -348,11 +424,30 @@ def main() -> int:
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--learning-rate", type=float, default=0.001)
     parser.add_argument("--seed", type=int, default=20260828)
-    parser.add_argument("--minimum-balanced-accuracy", type=float, default=0.70)
+    parser.add_argument(
+        "--minimum-balanced-accuracy",
+        type=float,
+        default=0.50,
+        help="Product overall metric; balanced accuracy avoids background-window inflation.",
+    )
+    parser.add_argument("--minimum-neck-extension-f1", type=float, default=0.60)
+    parser.add_argument("--minimum-chin-tuck-f1", type=float, default=0.60)
+    parser.add_argument(
+        "--minimum-head-resistance-precision",
+        type=float,
+        default=0.80,
+        help="Resistance must not be triggered by ordinary pressure/noise.",
+    )
+    parser.add_argument(
+        "--minimum-head-resistance-recall",
+        type=float,
+        default=0.80,
+        help="Resistance must detect at least 80%% of labelled valid holds.",
+    )
     parser.add_argument(
         "--enforce-quality-gate",
         action="store_true",
-        help="Exit with status 2 if independent validation is below the minimum.",
+        help="Exit with status 2 if any independent validation criterion is below its minimum.",
     )
     args = parser.parse_args()
 
@@ -407,7 +502,14 @@ def main() -> int:
     test_metrics = make_metrics(test_actual, test_predictions)
 
     parameter_count = sum(parameter.numel() for parameter in model.parameters())
-    eligible = float(validation_metrics["balanced_accuracy"]) >= args.minimum_balanced_accuracy
+    eligible, quality_criteria = evaluate_quality_gate(
+        validation_metrics,
+        args.minimum_balanced_accuracy,
+        args.minimum_neck_extension_f1,
+        args.minimum_chin_tuck_f1,
+        args.minimum_head_resistance_precision,
+        args.minimum_head_resistance_recall,
+    )
     report = {
         "model_name": "TinyDepthwiseCnn",
         "model_version": "hat-motion-v0",
@@ -419,12 +521,12 @@ def main() -> int:
         "stride_samples": args.stride_samples,
         "classes": list(CLASS_NAMES),
         "input_channels": [
-            "ax_g_minus_neutral",
-            "ay_g_minus_neutral",
-            "az_g_minus_neutral",
-            "gx_dps_minus_neutral",
-            "gy_dps_minus_neutral",
-            "gz_dps_minus_neutral",
+            "acc_forward_g_minus_neutral",
+            "acc_lateral_g_minus_neutral",
+            "acc_vertical_g_minus_neutral",
+            "gyro_about_forward_dps_minus_neutral",
+            "gyro_about_lateral_dps_minus_neutral",
+            "gyro_about_vertical_dps_minus_neutral",
             "pressure_delta_adc_over_4095",
         ],
         "label_source": "logger clock phase; weak label, not manually delimited repetitions",
@@ -446,8 +548,8 @@ def main() -> int:
         "validation": validation_metrics,
         "test": test_metrics,
         "deployment_quality_gate": {
-            "metric": "participant-held-out balanced_accuracy",
-            "minimum": args.minimum_balanced_accuracy,
+            "metric": "participant-held-out action-specific acceptance criteria",
+            "criteria": quality_criteria,
             "passed": eligible,
             "result": "ELIGIBLE_FOR_FIRMWARE_EXPORT" if eligible else "BLOCKED_NEEDS_CLEANER_LABELS_AND_HARD_NEGATIVES",
         },
@@ -487,7 +589,8 @@ def main() -> int:
     print(
         "RESULT,QUALITY_GATE,"
         + ("PASS" if eligible else "BLOCKED")
-        + f",minimum_balanced_accuracy={args.minimum_balanced_accuracy:.2f}"
+        + ",criteria="
+        + json.dumps(quality_criteria, ensure_ascii=False)
     )
     print(f"INFO,ARTIFACTS,{args.out_dir}")
     if args.enforce_quality_gate and not eligible:
