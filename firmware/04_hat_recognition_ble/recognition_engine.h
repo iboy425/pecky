@@ -469,7 +469,7 @@ class HeadResistanceRecognizer {
     reset();
     pressureReady_ = false;
     selfTestActive_ = true;
-    selfTestSamplesRemaining_ = 200;  // Eight seconds at 25 Hz.
+    selfTestSamplesRemaining_ = 750;  // Thirty seconds at 25 Hz.
     selfTestReleasedCount_ = 0;
     selfTestHighCount_ = 0;
   }

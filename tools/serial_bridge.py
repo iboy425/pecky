@@ -6,7 +6,7 @@ disconnects. Run on Windows (the WSL wrapper invokes it for you).
 """
 from __future__ import annotations
 
-import asyncio, json, os, queue, threading
+import asyncio, json, os, queue, sys, threading
 import serial
 from websockets.asyncio.server import serve
 
@@ -64,6 +64,8 @@ async def main() -> None:
     device.dtr = device.rts = False; device.port = PORT; device.open(); device.reset_input_buffer()
     threading.Thread(target=reader, daemon=True).start()
     log("BRIDGE_READY ws://127.0.0.1:8765 COM7")
+    if "--pressure-test" in sys.argv:
+        command("PRESSURE_TEST")
     async with serve(handler, "127.0.0.1", 8765):
         while True:
             try: line = await asyncio.to_thread(line_queue.get, True, .5); await broadcast(line)

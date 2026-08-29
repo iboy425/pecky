@@ -280,12 +280,13 @@ void publishProgress() {
   // The terminal bridge is the production path for this prototype. Emit the
   // recognizer state over USB when radio advertising is intentionally off.
   if (!kEnableBleRadio) {
-    Serial.printf("PROGRESS,candidate=%u,hold=%lu,state=%u,neutral=%u,pressure=%u\n",
+    Serial.printf("PROGRESS,candidate=%u,hold=%lu,state=%u,neutral=%u,pressure=%u,test=%u\n",
                   static_cast<unsigned>(status.candidate),
                   static_cast<unsigned long>(status.candidateDurationMs),
                   static_cast<unsigned>(status.state),
                   status.neutralStable ? 1U : 0U,
-                  status.pressureHealthy ? 1U : 0U);
+                  status.pressureHealthy ? 1U : 0U,
+                  status.pressureTestActive ? 1U : 0U);
     return;
   }
   if (!isBleConnected()) return;
@@ -474,8 +475,12 @@ void handleSerialCommand(String command) {
     calibrated = false;
     const bool ok = calibrateAtNeutral();
     Serial.printf("CONTROL,CALIBRATE,%s\n", ok ? "DONE" : "FAILED");
+  } else if (command == "PRESSURE_TEST") {
+    recognitionEnabled = true;
+    recognitionEngine.startPressureSelfTest();
+    Serial.println("INFO,PRESSURE_TEST,RELEASE_0_5S_THEN_PRESS_PAD_0_5S_WITHIN_30S");
   } else if (command.length() > 0) {
-    Serial.println("ERROR,CONTROL,USE_START_PAUSE_STATUS_OR_CALIBRATE");
+    Serial.println("ERROR,CONTROL,USE_START_PAUSE_STATUS_CALIBRATE_OR_PRESSURE_TEST");
   }
 }
 
